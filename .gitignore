@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Artefactos que genera PLY al construir las tablas
+parser.out
+parser_expresion.out
+parsetab.py
+parsetab_expresion.py
+lextab.py
+
+# Reportes que el intérprete genera en cada ejecución.
+# Se ignora la carpeta entera en vez de usar *.dot / *.svg sueltos: esos
+# patrones también se comían los diagramas de docs/, que SÍ tienen que estar
+# en el repo porque los manuales los muestran.
+reportes/
+
+db.sqlite3
+staticfiles/
+.vscode/
+.idea/

@@ -1,0 +1,82 @@
+{% load static %}<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OxigenScript</title>
+    <link rel="stylesheet" href="{% static 'web/estilo.css' %}">
+</head>
+<body>
+
+<header class="barra">
+    <div class="marca">
+        <strong>OxigenScript</strong>
+        <span>Intérprete de un lenguaje inspirado en Rust</span>
+    </div>
+    <div class="acciones">
+        <button id="btn-nuevo" type="button">Nuevo</button>
+        <button id="btn-abrir" type="button">Abrir</button>
+        <button id="btn-guardar" type="button">Guardar</button>
+        <button id="btn-ejecutar" type="button" class="principal">Ejecutar</button>
+    </div>
+    <!-- El archivo se lee en el navegador, no se sube al servidor: no hace
+         falta almacenamiento ni permisos de escritura del lado de Django. -->
+    <input type="file" id="archivo" accept=".oxs,.txt" hidden>
+</header>
+
+<main>
+    <section class="editor">
+        <div class="numeros" id="numeros">1</div>
+        <textarea id="codigo" spellcheck="false" wrap="off">fn main() {
+    let mut x: i32 = 10;
+    let y: i32 = 20;
+
+    if x &lt; y {
+        x = x + y;
+    } else {
+        x = x - y;
+    }
+
+    while x &gt; 0 {
+        x -= 1;
+    }
+
+    println!("{}", x);
+}
+</textarea>
+    </section>
+
+    <section class="inferior">
+        <div class="panel consola">
+            <div class="titulo">Consola de salida</div>
+            <pre id="consola" class="cuerpo"></pre>
+        </div>
+
+        <div class="panel reportes">
+            <div class="pestanas">
+                <button class="pestana activa" data-panel="p-errores" type="button">
+                    Errores <span id="conteo-errores" class="chip">0</span>
+                </button>
+                <button class="pestana" data-panel="p-simbolos" type="button">
+                    Tabla de símbolos
+                </button>
+                <button class="pestana" data-panel="p-ast" type="button">AST</button>
+            </div>
+
+            <div id="p-errores" class="contenido visible">
+                <p class="vacio">Aquí se mostrarán los errores del programa.</p>
+            </div>
+            <div id="p-simbolos" class="contenido">
+                <p class="vacio">Aquí se mostrará la información de las variables y funciones.</p>
+            </div>
+            <div id="p-ast" class="contenido">
+                <p class="vacio">Aquí se mostrará el árbol de sintaxis abstracta.</p>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>window.CSRF_TOKEN = "{{ csrf_token }}";</script>
+<script src="{% static 'web/editor.js' %}"></script>
+</body>
+</html>
