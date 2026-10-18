@@ -6,6 +6,7 @@ class Generador:
         self.datos = []
         self.contador = 0
         self.cadenas = {}
+        self.entorno = None
 
     def emitir(self, instruccion, comentarios = ''):
         linea= '   ' + instruccion
@@ -19,6 +20,20 @@ class Generador:
 
     def comentario(self, texto):
         self.instrucciones.append('    // ' + texto)
+
+    def marcador(self, comentarios=''):
+        """Reserva un renglón vacío y devuelve su posición."""
+        self.instrucciones.append('')
+        if comentarios:
+            self.instrucciones[-1] = '    // (pendiente) ' + comentarios
+        return len(self.instrucciones) - 1
+
+    def parchar(self, indice, instruccion, comentarios=''):
+        """Rellena un renglón que se había dejado pendiente."""
+        linea = '   ' + instruccion
+        if comentarios:
+            linea = linea + '    //' + comentarios
+        self.instrucciones[indice] = linea
 
     def nueva_etiqueta(self, prefijo='L'):
         nombre = prefijo + str(self.contador)
