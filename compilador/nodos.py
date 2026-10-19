@@ -126,18 +126,86 @@ class LlamadaMacro(Instruccion):
         return list(self.argumentos)
 
     def generar(self, gen):
+        if self.nombre not in ('println', 'print'):
+            errores.semantico(
+                f"La macro '{self.nombre}!' no existe.",
+                self.linea, self.columna, self.nombre)
+            return
+
         gen.comentario(f'{self.nombre}!')
 
-        for argumento in self.argumentos:
-            argumento.generar(gen)
+        if self.argumentos:
+            primero = self.argumentos[0]
+            es_plantilla = (isinstance(primero, Literal)
+                            and primero.tipo == Tipo.STRING
+                            and '{}' in primero.valor)
 
-            if argumento.tipo == Tipo.STRING:
-                gen.emitir('mov x1, x0', 'print_cstr recibe la direccion en x1')
-                gen.emitir('bl print_cstr')
+            if es_plantilla:
+                self._plantilla(gen, primero.valor, self.argumentos[1:])
             else:
-                gen.emitir('bl print_num')
+                for argumento in self.argumentos:
+                    self._valor(gen, argumento)
 
-        gen.emitir('bl print_nl', 'salto de linea')
+        if self.nombre == 'println':
+            gen.emitir('bl print_nl', 'salto de linea')
+
+    # ------------------------------------------------------------------
+
+    def _plantilla(self, gen, plantilla, valores):
+        """Intercala los trozos de texto con los valores."""
+        trozos = plantilla.split('{}')
+        huecos = len(trozos) - 1
+
+        if huecos != len(valores):
+            errores.semantico(
+                f"La plantilla tiene {huecos} hueco(s) y se pasaron "
+                f"{len(valores)} valor(es).",
+                self.linea, self.columna, plantilla)
+
+        for posicion, trozo in enumerate(trozos):
+            self._texto(gen, trozo)
+            if posicion < len(valores):
+                self._valor(gen, valores[posicion])
+
+    def _texto(self, gen, texto):
+        """Imprime un literal de texto fijo."""
+        if not texto:
+            return
+        nombre = gen.cadena(texto)
+        gen.emitir(f'ldr x1, ={nombre}', 'trozo de la plantilla')
+        gen.emitir('bl print_cstr')
+
+    def _valor(self, gen, expresion):
+        """Imprime una expresion segun su tipo."""
+        expresion.generar(gen)
+
+        if expresion.tipo == Tipo.STRING:
+            gen.emitir('mov x1, x0', 'print_cstr recibe la direccion en x1')
+            gen.emitir('bl print_cstr')
+
+        elif expresion.tipo == Tipo.BOOL:
+            verdadero = gen.cadena('true')
+            falso = gen.cadena('false')
+            caso_falso = gen.nueva_etiqueta('Lbool')
+            fin = gen.nueva_etiqueta('Lbool')
+            gen.emitir('cmp w0, #0')
+            gen.emitir(f'b.eq {caso_falso}')
+            gen.emitir(f'ldr x1, ={verdadero}')
+            gen.emitir(f'b {fin}')
+            gen.etiqueta(caso_falso)
+            gen.emitir(f'ldr x1, ={falso}')
+            gen.etiqueta(fin)
+            gen.emitir('bl print_cstr')
+
+        elif expresion.tipo == Tipo.CHAR:
+            gen.emitir('strb w0, [sp, #-16]!', 'el caracter a la pila')
+            gen.emitir('strb wzr, [sp, #1]', 'terminador nulo')
+            gen.emitir('mov x1, sp', 'apuntar al caracter')
+            gen.emitir('bl print_cstr')
+            gen.emitir('add sp, sp, #16', 'devolver la pila')
+
+        else:
+            gen.emitir('bl print_num')
 
 
 class Bloque(Instruccion):
@@ -448,6 +516,26 @@ class Si(Instruccion):
     def hijos(self):
         return [self.condicion, self.entonces] + ([self.sino] if self.sino else [])
 
+    def generar(self, gen):
+        gen.comentario('if')
+        fin = gen.nueva_etiqueta('Lfin')
+
+        self.condicion.generar(gen)
+        gen.emitir('cmp w0, #0')
+
+        if self.sino:
+            caso_sino = gen.nueva_etiqueta('Lelse')
+            gen.emitir(f'b.eq {caso_sino}', 'condicion falsa')
+            self.entonces.generar(gen)
+            gen.emitir(f'b {fin}', 'saltar el else')
+            gen.etiqueta(caso_sino)
+            self.sino.generar(gen)
+        else:
+            gen.emitir(f'b.eq {fin}', 'condicion falsa')
+            self.entonces.generar(gen)
+
+        gen.etiqueta(fin)
+
 
 class Mientras(Instruccion):
     def __init__(self, condicion, cuerpo, etiqueta=None, linea=0, columna=0):
@@ -463,6 +551,24 @@ class Mientras(Instruccion):
     def hijos(self):
         return [self.condicion, self.cuerpo]
 
+    def generar(self, gen):
+        gen.comentario('while')
+        inicio = gen.nueva_etiqueta('Lwhile')
+        fin = gen.nueva_etiqueta('Lfin')
+
+        gen.etiqueta(inicio)
+        self.condicion.generar(gen)
+        gen.emitir('cmp w0, #0')
+        gen.emitir(f'b.eq {fin}', 'condicion falsa: salir')
+
+        gen.bucles.append({'nombre': self.nombre_etiqueta,
+                           'inicio': inicio, 'fin': fin})
+        self.cuerpo.generar(gen)
+        gen.bucles.pop()
+
+        gen.emitir(f'b {inicio}', 'volver a evaluar la condicion')
+        gen.etiqueta(fin)
+
 
 class Bucle(Instruccion):
     def __init__(self, cuerpo, etiqueta=None, linea=0, columna=0):
@@ -476,6 +582,21 @@ class Bucle(Instruccion):
 
     def hijos(self):
         return [self.cuerpo]
+
+    def generar(self, gen):
+        gen.comentario('loop')
+        inicio = gen.nueva_etiqueta('Lloop')
+        fin = gen.nueva_etiqueta('Lfin')
+
+        gen.etiqueta(inicio)
+
+        gen.bucles.append({'nombre': self.nombre_etiqueta,
+                           'inicio': inicio, 'fin': fin})
+        self.cuerpo.generar(gen)
+        gen.bucles.pop()
+
+        gen.emitir(f'b {inicio}', 'repetir siempre')
+        gen.etiqueta(fin)
 
 
 class Para(Instruccion):
@@ -493,6 +614,49 @@ class Para(Instruccion):
 
     def hijos(self):
         return [self.iterable, self.cuerpo]
+
+    def generar(self, gen):
+        if not isinstance(self.iterable, Rango):
+            errores.semantico(
+                "'for' solo soporta rangos de la forma a..b por ahora.",
+                self.linea, self.columna, self.variable)
+            return
+
+        gen.comentario(f'for {self.variable} in rango')
+        gen.entorno.abrir()
+
+        self.iterable.inicio.generar(gen)
+        contador = gen.entorno.declarar(self.variable, Tipo.I32, True)
+        gen.emitir(f'str x0, {contador.direccion()}',
+                   f'{self.variable} = inicio del rango')
+
+        self.iterable.fin.generar(gen)
+        limite = gen.entorno.declarar(f'$fin_{self.variable}', Tipo.I32)
+        gen.emitir(f'str x0, {limite.direccion()}', 'limite del rango')
+
+        inicio = gen.nueva_etiqueta('Lfor')
+        paso = gen.nueva_etiqueta('Lpaso')
+        fin = gen.nueva_etiqueta('Lfin')
+
+        gen.etiqueta(inicio)
+        gen.emitir(f'ldr x0, {contador.direccion()}', f'leer {self.variable}')
+        gen.emitir(f'ldr x1, {limite.direccion()}', 'leer el limite')
+        gen.emitir('cmp w0, w1')
+        gen.emitir(f'b.ge {fin}', 'rango exclusivo: corta antes del limite')
+
+        gen.bucles.append({'nombre': self.nombre_etiqueta,
+                           'inicio': paso, 'fin': fin})
+        self.cuerpo.generar(gen)
+        gen.bucles.pop()
+
+        gen.etiqueta(paso)
+        gen.emitir(f'ldr x0, {contador.direccion()}')
+        gen.emitir('add w0, w0, #1', 'siguiente valor')
+        gen.emitir(f'str x0, {contador.direccion()}')
+        gen.emitir(f'b {inicio}', 'volver a comprobar')
+
+        gen.etiqueta(fin)
+        gen.entorno.cerrar()
 
 
 class Match(Instruccion):
@@ -530,6 +694,17 @@ class Romper(Instruccion):
         marca = f"\n'{self.nombre_etiqueta}" if self.nombre_etiqueta else ''
         return f'Romper{marca}'
 
+    def generar(self, gen):
+        bucle = gen.bucle(self.nombre_etiqueta)
+        if bucle is None:
+            donde = (f"'{self.nombre_etiqueta}" if self.nombre_etiqueta
+                     else 'ningun bucle')
+            errores.semantico(
+                f"'break' no esta dentro de {donde}.",
+                self.linea, self.columna, 'break')
+            return
+        gen.emitir(f"b {bucle['fin']}", 'break')
+
 
 class Continuar(Instruccion):
     def __init__(self, etiqueta=None, linea=0, columna=0):
@@ -539,6 +714,17 @@ class Continuar(Instruccion):
     def etiqueta(self):
         marca = f"\n'{self.nombre_etiqueta}" if self.nombre_etiqueta else ''
         return f'Continuar{marca}'
+
+    def generar(self, gen):
+        bucle = gen.bucle(self.nombre_etiqueta)
+        if bucle is None:
+            donde = (f"'{self.nombre_etiqueta}" if self.nombre_etiqueta
+                     else 'ningun bucle')
+            errores.semantico(
+                f"'continue' no esta dentro de {donde}.",
+                self.linea, self.columna, 'continue')
+            return
+        gen.emitir(f"b {bucle['inicio']}", 'continue')
 
 
 class Arreglo(Expresion):
