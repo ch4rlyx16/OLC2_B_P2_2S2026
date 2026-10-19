@@ -1,0 +1,20 @@
+fn main() {
+    println!("=== OxigenNative ===");
+
+    let mut suma = 0;
+    for n in 1..6 {
+        suma += n;
+    }
+    println!("suma de 1 a 5 = {}", suma);
+
+    let nombre = "Carlos";
+    let edad = 21;
+    println!("{} tiene {} anios, mayor de edad: {}", nombre, edad, edad >= 18);
+
+    let mut contador = 3;
+    while contador > 0 {
+        println!("faltan {}", contador);
+        contador -= 1;
+    }
+    println!("listo!");
+}

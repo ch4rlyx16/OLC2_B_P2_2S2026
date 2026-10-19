@@ -7,8 +7,7 @@ import json
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
-
-from interprete.interprete import ejecutar
+from compilador.pipeline import compilar
 
 
 def editor(request):
@@ -31,4 +30,8 @@ def api_ejecutar(request):
                             status=400)
 
     
-    return JsonResponse(ejecutar(codigo))
+    entrada = datos.get('entrada', '')
+    if not isinstance(entrada, str):
+        entrada = ''
+
+    return JsonResponse(compilar(codigo, entrada))
