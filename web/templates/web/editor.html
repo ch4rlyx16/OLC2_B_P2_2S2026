@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OxigenScript</title>
+    <title>OxigenNative</title>
     <link rel="stylesheet" href="{% static 'web/estilo.css' %}">
 </head>
 <body>
 
 <header class="barra">
     <div class="marca">
-        <strong>OxigenScript</strong>
-        <span>Intérprete de un lenguaje inspirado en Rust</span>
+        <strong>OxigenNative</strong>
+        <span>Compilador de un lenguaje inspirado en Rust a ensamblador ARM64</span>
     </div>
     <div class="acciones">
         <button id="btn-nuevo" type="button">Nuevo</button>
@@ -53,10 +53,11 @@
         </div>
 
         <div class="panel reportes">
-            <div class="pestanas">
+             <div class="pestanas">
                 <button class="pestana activa" data-panel="p-errores" type="button">
                     Errores <span id="conteo-errores" class="chip">0</span>
                 </button>
+                <button class="pestana" data-panel="p-asm" type="button">ARM64</button>
                 <button class="pestana" data-panel="p-simbolos" type="button">
                     Tabla de símbolos
                 </button>
@@ -65,6 +66,9 @@
 
             <div id="p-errores" class="contenido visible">
                 <p class="vacio">Aquí se mostrarán los errores del programa.</p>
+            </div>
+            <div id="p-asm" class="contenido">
+                <p class="vacio">Aquí se mostrará el código ensamblador ARM64 generado.</p>
             </div>
             <div id="p-simbolos" class="contenido">
                 <p class="vacio">Aquí se mostrará la información de las variables y funciones.</p>

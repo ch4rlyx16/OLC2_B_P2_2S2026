@@ -1,4 +1,4 @@
-/* OxigenScript — lógica de la interfaz. */
+/* OxigenNative — lógica de la interfaz. */
 
 const codigo   = document.getElementById('codigo');
 const numeros  = document.getElementById('numeros');
@@ -134,12 +134,25 @@ function pintarAst(datos) {
         : '<p class="vacio">No se pudo construir el árbol.</p>');
 }
 
+function pintarEnsamblador(asm) {
+    if (!asm) {
+        mostrarPanel('p-asm',
+            '<p class="vacio">No se generó código. Revisá la pestaña de errores.</p>');
+        return;
+    }
+
+    const lineas = asm.split('\n').length;
+    mostrarPanel('p-asm',
+        `<p class="vacio">${lineas} líneas de ensamblador AArch64.</p>
+         <pre class="arbol">${seguro(asm)}</pre>`);
+}
+
 /* ---------- ejecutar ---------- */
 
 async function ejecutar() {
     btnEjecutar.disabled = true;
     limpiarConsola();
-    escribir('> Ejecutando OxigenScript...', 'estado');
+    escribir('> Compilando a ARM64 y ejecutando en QEMU...', 'estado');
 
     try {
         const respuesta = await fetch('/api/ejecutar', {
@@ -159,7 +172,7 @@ async function ejecutar() {
         const datos = await respuesta.json();
 
         if (datos.errores.length === 0) {
-            escribir('--- Compilación exitosa ---', 'estado');
+            escribir('--- Compilación y ejecución exitosas ---', 'estado');
         } else {
             escribir(`--- Se encontraron ${datos.errores.length} error(es) ---`, 'fallo');
         }
@@ -169,6 +182,7 @@ async function ejecutar() {
         escribir('--- Fin de la ejecución ---', 'estado');
 
         pintarErrores(datos.errores);
+        pintarEnsamblador(datos.ensamblador);
         pintarSimbolos(datos.simbolos);
         pintarAst(datos);
 
