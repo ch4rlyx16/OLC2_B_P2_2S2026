@@ -1,0 +1,32 @@
+fn doble(x: i32) -> i32 {
+    return x * 2;
+}
+
+fn suma(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn saludar() {
+    println!("hola desde una funcion");
+}
+
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn main() {
+    saludar();
+    println!(doble(5));
+    println!(suma(10, 20));
+    println!("suma(doble(3), 4) = {}", suma(doble(3), 4));
+    println!("factorial(5) = {}", factorial(5));
+
+    let mut total = 0;
+    for i in 1..5 {
+        total += doble(i);
+    }
+    println!("total = {}", total);
+}

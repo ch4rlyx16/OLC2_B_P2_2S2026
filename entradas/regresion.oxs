@@ -1,0 +1,34 @@
+fn triple(x: i32) -> i32 { return x * 3; }
+
+fn main() {
+    println!("-- aritmetica --");
+    println!(2 + 3 * 4);
+    println!(17 % 5);
+    println!(-7);
+    println!("-- comparaciones y logicos --");
+    println!(10 > 3);
+    println!(!true);
+    let d = 0;
+    if d != 0 && 100 / d > 1 { println!("NO debe entrar"); }
+    println!(false || true);
+    println!("-- variables y ambitos --");
+    let mut t = 10;
+    t += 5;
+    { let t = 999; println!("interno {}", t); }
+    println!("externo {}", t);
+    println!("-- plantillas --");
+    println!("{} / {} / {} / {}", "texto", 42, true, 'C');
+    println!("-- bucles --");
+    let mut s = 0;
+    for i in 1..6 { s += i; }
+    println!("suma {}", s);
+    for i in 0..5 { if i == 1 { continue; } if i == 3 { break; } println!("i={}", i); }
+    let mut c = 0;
+    loop { c += 10; if c >= 30 { break; } }
+    println!("loop {}", c);
+    'fuera: for a in 0..3 {
+        for b in 0..3 { if a + b == 2 { break 'fuera; } println!("{},{}", a, b); }
+    }
+    println!("-- funciones --");
+    println!("triple(7) = {}", triple(7));
+}

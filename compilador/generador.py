@@ -2,6 +2,8 @@ class Generador:
 
     """Juntamos el texto del ensamblador que va produciendo el compilador """
     def __init__(self):
+        self.funciones = {}
+        self.retorno = None
         self.bucles = []
         self.instrucciones = []
         self.datos = []

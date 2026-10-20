@@ -241,25 +241,54 @@ class Funcion(Nodo):
         return [self.cuerpo]
 
     def generar(self, gen):
-        if self.nombre != 'main':
-            return                      
-
         gen.entorno = Entorno()
+        salida = gen.nueva_etiqueta('Lret')
+        gen.retorno = salida
 
-        gen.comentario('=== funcion main (punto de entrada) ===')
-        gen.etiqueta('_start')
-        gen.emitir('mov x29, sp', 'x29 queda fijo: base del marco')
-        hueco = gen.marcador('espacio para variables')
+        if self.nombre == 'main':
+            gen.comentario('=== funcion main ===')
+            gen.etiqueta('_start')
+            gen.emitir('mov x29, sp', 'x29 queda fijo: base del marco')
+            hueco = gen.marcador('espacio para variables')
 
-        self.cuerpo.generar(gen)
+            self._guardar_parametros(gen)
+            self.cuerpo.generar(gen)
+
+            gen.etiqueta(salida)
+            gen.comentario('salir del programa')
+            gen.emitir('mov x0, #0', 'codigo de salida 0')
+            gen.emitir('mov x8, #93', 'syscall exit')
+            gen.emitir('svc #0', 'llamar al kernel')
+        else:
+            gen.comentario(f'=== funcion {self.nombre} ===')
+            gen.etiqueta('fn_' + self.nombre)
+            gen.emitir('stp x29, x30, [sp, #-16]!',
+                       'guardar marco anterior y direccion de retorno')
+            gen.emitir('mov x29, sp', 'base de mi marco')
+            hueco = gen.marcador('espacio para variables')
+
+            self._guardar_parametros(gen)
+            self.cuerpo.generar(gen)
+
+            gen.etiqueta(salida)
+            gen.emitir('mov sp, x29', 'soltar mis variables')
+            gen.emitir('ldp x29, x30, [sp], #16',
+                       'recuperar marco y direccion de retorno')
+            gen.emitir('ret', 'volver a quien me llamo')
 
         gen.parchar(hueco, f'sub sp, sp, #{gen.entorno.espacio()}',
                     f'{gen.entorno.maximo} bytes usados, alineado a 16')
 
-        gen.comentario('salir del programa')
-        gen.emitir('mov x0, #0', 'codigo de salida 0')
-        gen.emitir('mov x8, #93', 'syscall exit')
-        gen.emitir('svc #0', 'llamar al kernel')
+    def _guardar_parametros(self, gen):
+        if len(self.parametros) > 8:
+            errores.semantico(
+                f"'{self.nombre}' tiene mas de 8 parametros.",
+                self.linea, self.columna, self.nombre)
+            return
+        for indice, parametro in enumerate(self.parametros):
+            variable = gen.entorno.declarar(parametro.nombre, parametro.tipo)
+            gen.emitir(f'str x{indice}, {variable.direccion()}',
+                       f'guardar parametro {parametro.nombre}')
 
 class Programa(Nodo):
     def __init__(self, declaraciones):
@@ -274,7 +303,24 @@ class Programa(Nodo):
 
     def generar(self, gen):
         for declaracion in self.declaraciones:
-            declaracion.generar(gen)
+            if isinstance(declaracion, Funcion):
+                if declaracion.nombre in gen.funciones:
+                    errores.semantico(
+                        f"La funcion '{declaracion.nombre}' ya fue declarada.",
+                        declaracion.linea, declaracion.columna,
+                        declaracion.nombre)
+                    continue
+                gen.funciones[declaracion.nombre] = declaracion
+
+        if 'main' not in gen.funciones:
+            errores.semantico('Falta la funcion main().', 1, 1)
+            return
+
+        gen.funciones['main'].generar(gen)
+
+        for declaracion in self.declaraciones:
+            if isinstance(declaracion, Funcion) and declaracion.nombre != 'main':
+                declaracion.generar(gen)
 
 class Operador:
     SUMA = '+'
@@ -351,6 +397,38 @@ class Llamada(Expresion):
 
     def hijos(self):
         return list(self.argumentos)
+
+    def generar(self, gen):
+        funcion = gen.funciones.get(self.nombre)
+
+        if funcion is None:
+            errores.semantico(
+                f"La funcion '{self.nombre}' no esta declarada.",
+                self.linea, self.columna, self.nombre)
+            gen.emitir('mov w0, #0', 'valor de recuperacion')
+            return
+
+        if len(self.argumentos) != len(funcion.parametros):
+            errores.semantico(
+                f"'{self.nombre}' espera {len(funcion.parametros)} "
+                f"argumento(s), recibio {len(self.argumentos)}.",
+                self.linea, self.columna, self.nombre)
+            gen.emitir('mov w0, #0', 'valor de recuperacion')
+            return
+
+        self.tipo = funcion.tipo_retorno or Tipo.I32
+
+        gen.comentario(f'llamada a {self.nombre}')
+        for argumento in self.argumentos:
+            argumento.generar(gen)
+            gen.emitir('str x0, [sp, #-16]!', 'apilar argumento')
+
+        for indice in range(len(self.argumentos) - 1, -1, -1):
+            gen.emitir(f'ldr x{indice}, [sp], #16',
+                       f'argumento {indice} a su registro')
+
+        gen.emitir(f'bl fn_{self.nombre}', 'saltar guardando el retorno')
+
 
 
 class LlamadaString(Expresion):
@@ -477,6 +555,15 @@ class Retorno(Instruccion):
     def hijos(self):
         return [self.expresion] if self.expresion else []
 
+    def generar(self, gen):
+        if gen.retorno is None:
+            errores.semantico("'return' fuera de una funcion.",
+                              self.linea, self.columna, 'return')
+            return
+        if self.expresion:
+            self.expresion.generar(gen)
+        gen.emitir(f'b {gen.retorno}', 'return')
+
 
 class ExpresionInstruccion(Instruccion):
     def __init__(self, expresion, linea=0, columna=0):
@@ -488,6 +575,9 @@ class ExpresionInstruccion(Instruccion):
 
     def hijos(self):
         return [self.expresion]
+    
+    def generar(self, gen):
+        self.expresion.generar(gen)
 
 
 class Rango(Expresion):
