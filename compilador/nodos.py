@@ -76,6 +76,8 @@ class Literal(Expresion):
         elif self.tipo == Tipo.STRING:
             nombre = gen.cadena(self.valor)
             gen.emitir(f'ldr x0, ={nombre}', 'direccion del texto')
+        elif self.tipo == Tipo.F64:
+            gen.doble(self.valor)
         else:
             errores.semantico(
                 f'Los literales de tipo {self.tipo} todavia no estan '
@@ -107,9 +109,15 @@ class Binaria(Expresion):
 
         gen.comentario(f'inicio operacion {self.operador}')
         self.izquierda.generar(gen)
-        gen.emitir('str w0, [sp, #-16]!', 'guardar lado izquierdo')
+        izquierdo = self.izquierda.tipo
+        gen.emitir('str x0, [sp, #-16]!', 'guardar lado izquierdo')
         self.derecha.generar(gen)
-        gen.emitir('ldr w1, [sp], #16', 'recuperar lado izquierdo')
+        derecho = self.derecha.tipo
+        gen.emitir('ldr x1, [sp], #16', 'recuperar lado izquierdo')
+
+        if Tipo.F64 in (izquierdo, derecho):
+            self._flotante(gen, izquierdo, derecho)
+            return
 
         if self.operador == '+':
             gen.emitir('add w0, w1, w0')
@@ -128,6 +136,40 @@ class Binaria(Expresion):
             gen.emitir('cmp w1, w0', f'comparar izquierda {self.operador} derecha')
             gen.emitir(f'cset w0, {condiciones[self.operador]}',
                        'w0 = 1 si se cumple, 0 si no')
+
+    def _flotante(self, gen, izquierdo, derecho):
+        """Opera en punto flotante. Llega izquierda en x1 y derecha en x0."""
+        if izquierdo == Tipo.F64:
+            gen.emitir('fmov d1, x1', 'izquierda ya es double')
+        else:
+            gen.emitir('scvtf d1, w1', 'izquierda entera -> double')
+
+        if derecho == Tipo.F64:
+            gen.emitir('fmov d0, x0', 'derecha ya es double')
+        else:
+            gen.emitir('scvtf d0, w0', 'derecha entera -> double')
+
+        if self.operador in ('+', '-', '*', '/'):
+            instruccion = {'+': 'fadd', '-': 'fsub',
+                           '*': 'fmul', '/': 'fdiv'}[self.operador]
+            gen.emitir(f'{instruccion} d0, d1, d0')
+            gen.emitir('fmov x0, d0', 'los bits del resultado vuelven a x0')
+            self.tipo = Tipo.F64
+            return
+
+        if self.operador == '%':
+            errores.semantico(
+                "El operador '%' no se aplica a f64.",
+                self.linea, self.columna, '%')
+            gen.emitir('mov x0, #0', 'valor de recuperacion')
+            self.tipo = Tipo.F64
+            return
+
+        condiciones = {'==': 'eq', '!=': 'ne', '<': 'lt',
+                       '<=': 'le', '>': 'gt', '>=': 'ge'}
+        gen.emitir('fcmp d1, d0', f'comparar en flotante {self.operador}')
+        gen.emitir(f'cset w0, {condiciones[self.operador]}')
+        self.tipo = Tipo.BOOL
 
     def _logico(self, gen):
         gen.comentario(f'inicio operacion {self.operador} (corto circuito)')
@@ -241,6 +283,10 @@ class LlamadaMacro(Instruccion):
             gen.emitir('mov x1, sp', 'apuntar al caracter')
             gen.emitir('bl print_cstr')
             gen.emitir('add sp, sp, #16', 'devolver la pila')
+
+        elif expresion.tipo == Tipo.F64:
+            gen.emitir('fmov d0, x0', 'el double va en d0')
+            gen.emitir('bl print_f64')
 
         elif expresion.tipo == Tipo.NULO:
             nombre = gen.cadena('None')
@@ -437,8 +483,14 @@ class Unaria(Expresion):
         self.operando.generar(gen)
 
         if self.operador == '-':
-            self.tipo = Tipo.I32
-            gen.emitir('neg w0, w0', 'cambiar de signo')
+            if self.operando.tipo == Tipo.F64:
+                self.tipo = Tipo.F64
+                gen.emitir('fmov d0, x0')
+                gen.emitir('fneg d0, d0', 'cambiar de signo en flotante')
+                gen.emitir('fmov x0, d0')
+            else:
+                self.tipo = Tipo.I32
+                gen.emitir('neg w0, w0', 'cambiar de signo')
         elif self.operador == '!':
             self.tipo = Tipo.BOOL
             gen.emitir('cmp w0, #0')
@@ -471,6 +523,23 @@ class Llamada(Expresion):
             nombre = gen.cadena(str(tipo))
             gen.emitir(f'ldr x0, ={nombre}', f'typeof -> {tipo}')
             return
+        if self.nombre == 'sqrt':
+            self.tipo = Tipo.F64
+            if len(self.argumentos) != 1:
+                errores.semantico(
+                    "'sqrt' espera 1 argumento.",
+                    self.linea, self.columna, 'sqrt')
+                gen.emitir('mov x0, #0', 'valor de recuperacion')
+                return
+            self.argumentos[0].generar(gen)
+            if self.argumentos[0].tipo == Tipo.F64:
+                gen.emitir('fmov d0, x0')
+            else:
+                gen.emitir('scvtf d0, w0', 'entero -> double')
+            gen.emitir('fsqrt d0, d0')
+            gen.emitir('fmov x0, d0')
+            return
+
         if self.nombre == 'random':
             self.tipo = Tipo.I32
             if len(self.argumentos) != 2:
@@ -578,6 +647,11 @@ class DeclaracionVariable(Instruccion):
             gen.emitir('mov w0, #0', 'sin valor inicial')
             tipo = self.tipo or Tipo.I32
 
+        if (tipo == Tipo.F64 and self.expresion is not None
+                and self.expresion.tipo != Tipo.F64):
+            gen.emitir('scvtf d0, w0', 'entero -> double')
+            gen.emitir('fmov x0, d0')
+
         elemento = self.expresion.tipo_elemento if self.expresion else None
         variable = entorno.declarar(self.nombre, tipo, self.mutable,
                                     linea=self.linea, tipo_elemento=elemento)
@@ -615,6 +689,12 @@ class Asignacion(Instruccion):
 
         self.expresion.generar(gen)
 
+        if variable.tipo == Tipo.F64:
+            self._flotante(gen, variable)
+            gen.acceso('str', 'x0', variable.offset,
+                       f'{self.nombre} {self.operador} ...')
+            return
+
         if self.operador != '=':
             gen.emitir('mov w1, w0', 'el lado derecho pasa a w1')
             gen.acceso('ldr', 'x0', variable.offset,
@@ -634,6 +714,33 @@ class Asignacion(Instruccion):
 
         gen.acceso('str', 'x0', variable.offset,
                    f'{self.nombre} {self.operador} ...')
+
+    def _flotante(self, gen, variable):
+        """Asignacion sobre una variable f64. Llega el lado derecho en x0."""
+        if self.expresion.tipo == Tipo.F64:
+            gen.emitir('fmov d1, x0', 'el lado derecho ya es double')
+        else:
+            gen.emitir('scvtf d1, w0', 'el lado derecho entero -> double')
+
+        if self.operador == '=':
+            gen.emitir('fmov x0, d1')
+            return
+
+        gen.acceso('ldr', 'x0', variable.offset,
+                   f'valor actual de {self.nombre}')
+        gen.emitir('fmov d0, x0')
+
+        simbolo = self.operador[0]
+        if simbolo == '%':
+            errores.semantico(
+                "El operador '%=' no se aplica a f64.",
+                self.linea, self.columna, self.operador)
+            return
+        instruccion = {'+': 'fadd', '-': 'fsub',
+                       '*': 'fmul', '/': 'fdiv'}[simbolo]
+        gen.emitir(f'{instruccion} d0, d0, d1')
+        gen.emitir('fmov x0, d0')
+
 
 class AsignacionIndice(Instruccion):
     """a[i] = valor;  — tambien sirve para m[0][1] = valor;"""

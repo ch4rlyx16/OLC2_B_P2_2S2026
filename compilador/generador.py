@@ -1,3 +1,6 @@
+import struct
+
+
 class Generador:
 
     """Juntamos el texto del ensamblador que va produciendo el compilador """
@@ -32,6 +35,20 @@ class Generador:
             self.emitir(f'sub x9, x29, #{-offset}',
                         'marco grande: calcular la direccion aparte')
             self.emitir(f'{instruccion} {registro}, [x9]', comentarios)
+
+    def doble(self, valor, registro='x0'):
+        """Carga el patron de bits de un double en un registro entero.
+
+        No existe una instruccion que cargue 64 bits de un golpe: se arma en
+        cuatro trozos de 16 bits con movz y movk.
+        """
+        bits = struct.unpack('<Q', struct.pack('<d', float(valor)))[0]
+        self.emitir(f'movz {registro}, #{bits & 0xFFFF}', f'double {valor}')
+        for desplazamiento in (16, 32, 48):
+            trozo = (bits >> desplazamiento) & 0xFFFF
+            if trozo:
+                self.emitir(
+                    f'movk {registro}, #{trozo}, lsl #{desplazamiento}')
 
     def etiqueta(self, nombre):
         linea = nombre + ':'

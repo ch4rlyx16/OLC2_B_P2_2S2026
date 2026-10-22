@@ -438,6 +438,7 @@ Garantiza que **no modifica `x19`–`x28`**.
 | `str_replace` | x1 = cadena, x2 = viejo, x3 = nuevo → x0 = cadena nueva |
 | `array_slice` | x1 = puntero, w2 = inicio, w3 = fin → x0 = arreglo nuevo |
 | `str_split` | x1 = cadena, x2 = separador → x0 = arreglo de cadenas |
+| `print_f64` | d0 = número → lo imprime con hasta 6 decimales |
 
 `str_replace` hace **dos pasadas**: la primera cuenta ocurrencias para reservar
 exactamente `len + n*(len_nuevo - len_viejo) + 1` bytes; la segunda copia
@@ -579,9 +580,7 @@ No implementado, reportado como error semántico claro (nunca una excepción):
 
 | | Motivo |
 |---|---|
-| `f64` | requiere los registros `s0`–`s31` y otro juego de instrucciones |
 | `structs` | requiere disposición de campos y tabla de tipos |
-| slices y préstamos (`&a[0..2]`) | requiere punteros con longitud asociada |
 | `String::from` | — |
 
 Además, por diseño:

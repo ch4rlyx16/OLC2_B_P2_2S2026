@@ -12,6 +12,7 @@
 //    str_replace    x1 = cadena, x2 = viejo, x3 = nuevo -> x0 = cadena nueva
 //    array_slice    x1 = puntero, w2 = inicio, w3 = fin  -> x0 = arreglo nuevo
 //    str_split      x1 = cadena, x2 = separador          -> x0 = arreglo de cadenas
+//    print_f64      d0 = numero    -> lo imprime con hasta 6 decimales
 // ============================================================================
 
 .bss
@@ -142,6 +143,7 @@ rnd_estado:     .quad 0
 .global str_replace
 .global array_slice
 .global str_split
+.global print_f64
 
 // ---------------------------------------------------------------------------
 //  rnd_siguiente() -> w0 = pseudoaleatorio no negativo
@@ -511,6 +513,93 @@ sp_uno_solo:
     str     x19, [x0]
 sp_salir:
     ldp     x23, x24, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    ret
+.data
+pf_menos:   .asciz "-"
+pf_punto:   .asciz "."
+
+.bss
+.align 3
+pf_buf:     .skip 16
+
+.text
+
+// ---------------------------------------------------------------------------
+//  print_f64(d0 = numero) -> imprime con hasta 6 decimales, sin ceros de sobra
+// ---------------------------------------------------------------------------
+print_f64:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    stp     x19, x20, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+
+    fcmp    d0, #0.0
+    b.ge    pf_pos
+    str     d0, [sp, #-16]!
+    adrp    x1, pf_menos
+    add     x1, x1, :lo12:pf_menos
+    bl      print_cstr
+    ldr     d0, [sp], #16
+    fneg    d0, d0
+pf_pos:
+    // --- parte entera ---
+    fcvtzs  x19, d0
+    str     d0, [sp, #-16]!
+    mov     w0, w19
+    bl      print_num
+    ldr     d0, [sp], #16
+
+    // --- parte fraccionaria * 1000000 ---
+    scvtf   d1, x19
+    fsub    d0, d0, d1
+    movz    x9, #0x4240
+    movk    x9, #0xF, lsl #16       // x9 = 1000000
+    scvtf   d2, x9
+    fmul    d0, d0, d2
+    fcvtzu  w20, d0
+    cbz     w20, pf_fin
+
+    // --- 6 digitos en el buffer, de atras hacia adelante ---
+    adrp    x21, pf_buf
+    add     x21, x21, :lo12:pf_buf
+    add     x22, x21, #6
+    strb    wzr, [x22]
+    mov     w9, #10
+    mov     x10, #6
+pf_dig:
+    sub     x22, x22, #1
+    udiv    w11, w20, w9
+    msub    w12, w11, w9, w20
+    add     w12, w12, #48
+    strb    w12, [x22]
+    mov     w20, w11
+    subs    x10, x10, #1
+    b.ne    pf_dig
+
+    // --- quitar ceros finales, dejando al menos un digito ---
+    add     x22, x21, #5
+pf_quita:
+    cmp     x22, x21
+    b.ls    pf_imprime
+    ldrb    w11, [x22]
+    cmp     w11, #48
+    b.ne    pf_imprime
+    strb    wzr, [x22]
+    sub     x22, x22, #1
+    b       pf_quita
+
+pf_imprime:
+    adrp    x1, pf_punto
+    add     x1, x1, :lo12:pf_punto
+    bl      print_cstr
+    adrp    x1, pf_buf
+    add     x1, x1, :lo12:pf_buf
+    bl      print_cstr
+
+pf_fin:
     ldp     x21, x22, [sp], #16
     ldp     x19, x20, [sp], #16
     ldp     x29, x30, [sp], #16

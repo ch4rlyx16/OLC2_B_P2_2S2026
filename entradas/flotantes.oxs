@@ -1,0 +1,50 @@
+fn euclidean_distance(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+fn helper_leibniz(n: i32) -> f64 {
+    let mut suma = 0.0;
+    let mut i = 0;
+    let mut signo = 1.0;
+    while i < n {
+        let denominador = 2.0 * i + 1.0;
+        suma += signo / denominador;
+        signo = signo * -1.0;
+        i += 1;
+    }
+    return suma;
+}
+
+fn aprox_pi(n: i32) -> f64 {
+    return 4.0 * helper_leibniz(n);
+}
+
+fn main() {
+    let a: f64 = 3.14;
+    let b = 2.5;
+    println!(a);
+    println!(b);
+    println!(a + b);
+    println!(a - b);
+    println!(a * b);
+    println!(a / b);
+    println!(-a);
+    println!("{} {} {}", a > b, a == b, a < b);
+
+    let c: f64 = 7;
+    println!(c);
+
+    let mut d = 1.0;
+    d += 0.5;
+    d *= 4.0;
+    println!(d);
+
+    println!(sqrt(16.0));
+    println!("mixto: {}", 2 + 0.5);
+    println!(typeof(a));
+
+    println!("distancia = {}", euclidean_distance(0.0, 0.0, 3.0, 4.0));
+    println!("pi ~ {}", aprox_pi(1000));
+}
