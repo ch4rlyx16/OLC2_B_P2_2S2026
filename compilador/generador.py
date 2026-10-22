@@ -10,12 +10,28 @@ class Generador:
         self.contador = 0
         self.cadenas = {}
         self.entorno = None
+        self.simbolos = []
 
     def emitir(self, instruccion, comentarios = ''):
         linea= '   ' + instruccion
         if comentarios: 
             linea = linea + '    //' + comentarios
         self.instrucciones.append(linea)
+
+    def acceso(self, instruccion, registro, offset, comentarios=''):
+        """Emite un ldr/str contra [x29, #offset], aunque el offset sea grande.
+
+        ARM64 solo admite desplazamientos de -256 a 255 en esta forma. Cuando
+        el marco crece mas que eso (pasa con los arreglos) hay que calcular la
+        direccion en un registro auxiliar primero.
+        """
+        if -256 <= offset <= 255:
+            self.emitir(f'{instruccion} {registro}, [x29, #{offset}]',
+                        comentarios)
+        else:
+            self.emitir(f'sub x9, x29, #{-offset}',
+                        'marco grande: calcular la direccion aparte')
+            self.emitir(f'{instruccion} {registro}, [x9]', comentarios)
 
     def etiqueta(self, nombre):
         linea = nombre + ':'

@@ -30,10 +30,12 @@ class Entorno:
     su propio marco de pila y su propio x29.
     """
 
-    def __init__(self):
-        self.ambitos = [{}]        # pila de diccionarios, uno por bloque
-        self.desplazamiento = 0    # espacio en uso ahora mismo
-        self.maximo = 0            # el pico historico, para el sub sp
+    def __init__(self, registro=None, ambito='global'):
+        self.ambitos = [{}]
+        self.desplazamiento = 0
+        self.maximo = 0
+        self.registro = registro if registro is not None else []
+        self.ambito = ambito
 
     # ------------------------------------------------------------------
     # Bloques
@@ -48,11 +50,19 @@ class Entorno:
         muertas = self.ambitos.pop()
         self.desplazamiento -= TAMANO * len(muertas)
 
+    def reservar(self, cantidad):
+        """Aparta `cantidad` casillas contiguas. Devuelve el offset de la primera."""
+        self.desplazamiento += TAMANO * cantidad
+        if self.desplazamiento > self.maximo:
+            self.maximo = self.desplazamiento
+        return -self.desplazamiento
+
     # ------------------------------------------------------------------
     # Variables
     # ------------------------------------------------------------------
 
-    def declarar(self, nombre, tipo, mutable=False):
+    def declarar(self, nombre, tipo, mutable=False, linea=0,
+                 categoria='Variable'):
         """Le asigna un offset a `nombre` y devuelve la Variable."""
         self.desplazamiento += TAMANO
         if self.desplazamiento > self.maximo:
@@ -60,6 +70,17 @@ class Entorno:
 
         variable = Variable(nombre, tipo, -self.desplazamiento, mutable)
         self.ambitos[-1][nombre] = variable
+
+        if not nombre.startswith('$'):
+            self.registro.append({
+                'identificador': nombre,
+                'categoria': categoria,
+                'tipo': str(tipo) if tipo else '-',
+                'ambito': self.ambito,
+                'linea': linea,
+                'direccion': variable.direccion(),
+            })
+
         return variable
 
     def buscar(self, nombre):

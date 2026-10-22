@@ -1,0 +1,59 @@
+fn find_max(a: [i32; 6], n: i32) -> i32 {
+    let mut mayor = a[0];
+    for i in 1..n {
+        if a[i] > mayor { mayor = a[i]; }
+    }
+    return mayor;
+}
+
+fn sort_array(a: [i32; 6], n: i32) {
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < n - 1 {
+            if a[j] > a[j + 1] {
+                let temp = a[j];
+                a[j] = a[j + 1];
+                a[j + 1] = temp;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+}
+
+fn compare_arrays(x: [i32; 3], y: [i32; 3], n: i32) -> bool {
+    for i in 0..n {
+        if x[i] != y[i] { return false; }
+    }
+    return true;
+}
+
+fn multiply_matrix(a: [[i32; 2]; 2], b: [[i32; 2]; 2], c: [[i32; 2]; 2]) {
+    for i in 0..2 {
+        for j in 0..2 {
+            let mut suma = 0;
+            for k in 0..2 { suma += a[i][k] * b[k][j]; }
+            c[i][j] = suma;
+        }
+    }
+}
+
+fn main() {
+    let datos = [5, 3, 9, 1, 7, 2];
+    println!("max = {}", find_max(datos, 6));
+
+    let mut orden = [5, 3, 9, 1, 7, 2];
+    sort_array(orden, 6);
+    println!("{} {} {} {} {} {}", orden[0], orden[1], orden[2],
+             orden[3], orden[4], orden[5]);
+
+    println!("iguales = {}", compare_arrays([1,2,3], [1,2,3], 3));
+    println!("distintos = {}", compare_arrays([1,2,3], [1,9,3], 3));
+
+    let a = [[1, 2], [3, 4]];
+    let b = [[5, 6], [7, 8]];
+    let mut c = [[0; 2], [0; 2]];
+    multiply_matrix(a, b, c);
+    println!("{} {} / {} {}", c[0][0], c[0][1], c[1][0], c[1][1]);
+}

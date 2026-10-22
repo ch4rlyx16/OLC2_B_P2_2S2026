@@ -9,6 +9,7 @@ from .errores import errores
 from .nodos import (Expresion, Literal, Identificador, Binaria, Unaria,
                     Operador, Llamada, LlamadaString, Programa, Parametro,
                     Funcion, Bloque, DeclaracionVariable, Asignacion,
+                    AsignacionIndice,
                     LlamadaMacro, Retorno, ExpresionInstruccion,
                     Rango, Si, Mientras, Bucle, Para, Match, BrazoMatch,
                     Romper, Continuar, Arreglo, Indice,
@@ -210,6 +211,14 @@ def p_asignacion(p):
                   | IDENTIFICADOR MOD_IGUAL expresion PUNTO_COMA'''
     linea, columna = _pos(p, 1)
     p[0] = Asignacion(p[1], p[2], p[3], linea, columna)
+
+
+def p_asignacion_indice(p):
+    '''asignacion : expresion COR_IZQ expresion COR_DER IGUAL expresion_valor PUNTO_COMA'''
+    # La posicion se toma del '[' porque p[1] es un no terminal y PLY no les
+    # guarda linea ni columna.
+    linea, columna = _pos(p, 2)
+    p[0] = AsignacionIndice(p[1], p[3], p[6], linea, columna)
 
 
 def p_retorno(p):

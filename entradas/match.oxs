@@ -1,0 +1,22 @@
+fn clasificar(n: i32) {
+    match n {
+        0 => { println!("cero"); }
+        1 => { println!("uno"); }
+        2..5 => { println!("entre 2 y 5"); }
+        _ => { println!("otro"); }
+    }
+}
+
+fn main() {
+    clasificar(0);
+    clasificar(1);
+    clasificar(3);
+    clasificar(5);
+    clasificar(9);
+
+    let x = 2;
+    match x + 1 {
+        3 => { println!("la expresion se evaluo bien"); }
+        _ => { println!("mal"); }
+    }
+}

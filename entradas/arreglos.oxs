@@ -1,0 +1,27 @@
+fn suma_arreglo(a: [i32; 5]) -> i32 {
+    let mut t = 0;
+    for i in 0..5 { t += a[i]; }
+    return t;
+}
+
+fn main() {
+    let a = [10, 20, 30];
+    println!(a[0]);
+    println!(a[2]);
+
+    let mut b = [1, 2, 3];
+    b[1] = 99;
+    println!("b[1] = {}", b[1]);
+
+    let ceros = [0; 4];
+    println!(ceros[3]);
+
+    let m = [[1, 2], [3, 4]];
+    println!("m[1][0] = {}", m[1][0]);
+
+    let mut n = [[0; 2], [0; 2]];
+    n[0][1] = 7;
+    println!("n[0][1] = {}", n[0][1]);
+
+    println!("suma = {}", suma_arreglo([1, 2, 3, 4, 5]));
+}

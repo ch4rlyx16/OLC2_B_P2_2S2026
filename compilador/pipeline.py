@@ -13,6 +13,7 @@ import os
 import subprocess
 import tempfile
 import time
+from . import reportes
 
 from .errores import errores
 from .generador import Generador
@@ -99,12 +100,18 @@ def compilar(codigo, entrada='', ejecutar=True):
 
     arbol = analizar(codigo)        # analizar() limpia la lista de errores
 
+    generador = Generador()
     ensamblador = ''
     if arbol is not None and not errores.hay_errores():
-        generador = Generador()
-        arbol.generar(generador)
-        ensamblador = generador.codigo()
-
+        try:
+            arbol.generar(generador)
+            ensamblador = generador.codigo()
+        except Exception as fallo:
+            errores.semantico(
+                f'Error interno del compilador: '
+                f'{type(fallo).__name__}: {fallo}', 0, 0)
+            ensamblador = ''
+            
     salida = ''
     if ejecutar and ensamblador and not errores.hay_errores():
         try:
@@ -112,13 +119,17 @@ def compilar(codigo, entrada='', ejecutar=True):
         except FalloDeHerramienta as fallo:
             salida = str(fallo)
 
+    ast_texto = reportes.arbol_a_texto(arbol)
+    archivos, ast_svg = reportes.guardar(arbol, generador.simbolos)
+
     return {
         'salida': salida,
         'ensamblador': ensamblador,
         'errores': [e.como_dict() for e in errores.ordenados()],
-        'simbolos': [],
-        'ast': '',
-        'ast_svg': '',
+        'simbolos': generador.simbolos,
+        'ast': ast_texto,
+        'ast_svg': ast_svg or '',
+        'archivos': archivos,
         'tiempo': round(time.perf_counter() - inicio, 4),
     }
 

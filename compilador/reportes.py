@@ -40,6 +40,8 @@ def ast_a_dot(arbol):
 
     contador = [0]
 
+    
+
     def recorrer(nodo, padre=None):
         if nodo is None:
             return
@@ -55,6 +57,26 @@ def ast_a_dot(arbol):
         recorrer(arbol)
 
     lineas.append('}')
+    return '\n'.join(lineas)
+
+def arbol_a_texto(arbol):
+    """Dibuja el AST con caracteres de caja, por si no hay Graphviz."""
+    if arbol is None:
+        return ''
+
+    lineas = []
+
+    def recorrer(nodo, sangria, es_ultimo, es_raiz):
+        rama = '' if es_raiz else ('└── ' if es_ultimo else '├── ')
+        lineas.append(sangria + rama + str(nodo.etiqueta()).replace('\n', ' '))
+
+        nueva = sangria if es_raiz else sangria + ('    ' if es_ultimo
+                                                   else '│   ')
+        hijos = [h for h in nodo.hijos() if h is not None]
+        for indice, hijo in enumerate(hijos):
+            recorrer(hijo, nueva, indice == len(hijos) - 1, False)
+
+    recorrer(arbol, '', True, True)
     return '\n'.join(lineas)
 
 
@@ -108,7 +130,7 @@ def tabla_simbolos_html(simbolos):
         celdas = ''.join(
             f'<td>{html.escape(str(s[c]))}</td>'
             for c in ('identificador', 'categoria', 'tipo',
-                      'ambito', 'linea', 'valor'))
+                      'ambito', 'linea', 'direccion'))
         filas.append(f'<tr><td>{i}</td>{celdas}</tr>')
 
     return f"""<!DOCTYPE html>
@@ -116,10 +138,10 @@ def tabla_simbolos_html(simbolos):
 <head><meta charset="UTF-8"><title>Tabla de símbolos</title>
 <style>{_ESTILO}</style></head>
 <body>
-<h1>Tabla de símbolos — OxigenScript</h1>
+<h1>Tabla de símbolos — OxigenNative</h1>
 <table>
 <thead><tr><th>No.</th><th>Identificador</th><th>Categoría</th><th>Tipo</th>
-<th>Ámbito</th><th>Línea</th><th>Valor</th></tr></thead>
+<th>Ámbito</th><th>Línea</th><th>Dirección</th></tr></thead>
 <tbody>{''.join(filas) or '<tr><td colspan="7">Sin símbolos.</td></tr>'}</tbody>
 </table>
 </body></html>"""

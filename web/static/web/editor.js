@@ -109,12 +109,12 @@ function pintarSimbolos(simbolos) {
             <td><code>${seguro(s.tipo)}</code></td>
             <td>${seguro(s.ambito)}</td>
             <td class="num">${s.linea}</td>
-            <td><code>${seguro(s.valor)}</code></td>
+            <td><code>${seguro(s.direccion)}</code></td>
         </tr>`).join('');
 
     mostrarPanel('p-simbolos', `<table>
         <thead><tr><th>No.</th><th>Identificador</th><th>Categoría</th>
-                   <th>Tipo</th><th>Ámbito</th><th>Línea</th><th>Valor</th></tr></thead>
+                   <th>Tipo</th><th>Ámbito</th><th>Línea</th><th>Dirección</th></tr></thead>
         <tbody>${filas}</tbody></table>`);
 }
 

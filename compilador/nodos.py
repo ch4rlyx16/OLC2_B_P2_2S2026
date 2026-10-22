@@ -1,6 +1,16 @@
 from .tipos import Tipo
 from .errores import errores
-from .entorno import Entorno
+from .entorno import Entorno, TAMANO
+
+NO_SOPORTADO = {
+    'Rango': 'los rangos fuera de un for',
+    'DeclaracionStruct': 'los structs',
+    'InstanciaStruct': 'los structs',
+    'AccesoCampo': 'el acceso a campos de struct',
+    'LlamadaMetodo': 'los metodos (.len(), .to_uppercase(), ...)',
+    'LlamadaString': 'String::from',
+    'Prestamo': 'los prestamos y slices (&)',
+}
 
 class Nodo: 
     def __init__ (self, linea = 0, columna = 0):
@@ -8,7 +18,14 @@ class Nodo:
         self.columna = columna
 
     def generar(self, gen):
-        raise NotImplementedError(f"{type(self).__name__} todavia no implementa generar()")
+        nombre = type(self).__name__
+        que = NO_SOPORTADO.get(nombre, nombre)
+        errores.semantico(
+            f'{que}: todavia no esta soportado por el compilador.',
+            self.linea, self.columna, nombre)
+        if isinstance(self, Expresion):
+            gen.emitir('mov w0, #0', 'valor de recuperacion')
+
 
     def etiqueta(self):
         return type(self).__name__ 
@@ -44,6 +61,12 @@ class Literal(Expresion):
         elif self.tipo == Tipo.STRING:
             nombre = gen.cadena(self.valor)
             gen.emitir(f'ldr x0, ={nombre}', 'direccion del texto')
+        else:
+            errores.semantico(
+                f'Los literales de tipo {self.tipo} todavia no estan '
+                f'soportados (f64).',
+                self.linea, self.columna, str(self.valor))
+            gen.emitir('mov w0, #0', 'valor de recuperacion')
 
 class Binaria(Expresion):
     def __init__(self, izquierda, operador, derecha, linea=0, columna=0):
@@ -241,7 +264,7 @@ class Funcion(Nodo):
         return [self.cuerpo]
 
     def generar(self, gen):
-        gen.entorno = Entorno()
+        gen.entorno = Entorno(gen.simbolos, self.nombre)
         salida = gen.nueva_etiqueta('Lret')
         gen.retorno = salida
 
@@ -286,8 +309,13 @@ class Funcion(Nodo):
                 self.linea, self.columna, self.nombre)
             return
         for indice, parametro in enumerate(self.parametros):
-            variable = gen.entorno.declarar(parametro.nombre, parametro.tipo)
-            gen.emitir(f'str x{indice}, {variable.direccion()}',
+            # Los parametros se declaran mutables: en el cuerpo son una copia
+            # local, y los arreglos llegan como puntero, asi que funciones como
+            # sort_array() necesitan poder escribir sobre ellos.
+            variable = gen.entorno.declarar(
+                parametro.nombre, parametro.tipo, True,
+                linea=parametro.linea, categoria='Parámetro')
+            gen.acceso('str', f'x{indice}', variable.offset,
                        f'guardar parametro {parametro.nombre}')
 
 class Programa(Nodo):
@@ -311,6 +339,16 @@ class Programa(Nodo):
                         declaracion.nombre)
                     continue
                 gen.funciones[declaracion.nombre] = declaracion
+                gen.simbolos.append({
+                    'identificador': declaracion.nombre,
+                    'categoria': 'Función',
+                    'tipo': str(declaracion.tipo_retorno or '-'),
+                    'ambito': 'global',
+                    'linea': declaracion.linea,
+                    'direccion': ('_start' if declaracion.nombre == 'main'
+                                  else 'fn_' + declaracion.nombre),
+                })
+
 
         if 'main' not in gen.funciones:
             errores.semantico('Falta la funcion main().', 1, 1)
@@ -358,7 +396,7 @@ class Identificador(Expresion):
             return
 
         self.tipo = variable.tipo
-        gen.emitir(f'ldr x0, {variable.direccion()}',
+        gen.acceso('ldr', 'x0', variable.offset,
                    f'leer {self.nombre}')
 
 
@@ -488,8 +526,9 @@ class DeclaracionVariable(Instruccion):
             gen.emitir('mov w0, #0', 'sin valor inicial')
             tipo = self.tipo or Tipo.I32
 
-        variable = entorno.declarar(self.nombre, tipo, self.mutable)
-        gen.emitir(f'str x0, {variable.direccion()}',
+        variable = entorno.declarar(self.nombre, tipo, self.mutable,
+                                    linea=self.linea)
+        gen.acceso('str', 'x0', variable.offset,
                    f'let {self.nombre} = ...')
 
 
@@ -525,7 +564,7 @@ class Asignacion(Instruccion):
 
         if self.operador != '=':
             gen.emitir('mov w1, w0', 'el lado derecho pasa a w1')
-            gen.emitir(f'ldr x0, {variable.direccion()}',
+            gen.acceso('ldr', 'x0', variable.offset,
                        f'valor actual de {self.nombre}')
             simbolo = self.operador[0]
             if simbolo == '+':
@@ -540,10 +579,45 @@ class Asignacion(Instruccion):
                 gen.emitir('sdiv w2, w0, w1', 'cociente')
                 gen.emitir('msub w0, w2, w1, w0', 'resto = x - cociente*y')
 
-        gen.emitir(f'str x0, {variable.direccion()}',
+        gen.acceso('str', 'x0', variable.offset,
                    f'{self.nombre} {self.operador} ...')
 
+class AsignacionIndice(Instruccion):
+    """a[i] = valor;  — tambien sirve para m[0][1] = valor;"""
 
+    def __init__(self, arreglo, indice, expresion, linea=0, columna=0):
+        super().__init__(linea, columna)
+        self.arreglo = arreglo
+        self.indice = indice
+        self.expresion = expresion
+
+    def etiqueta(self):
+        return 'Asignacion\n[i] ='
+
+    def hijos(self):
+        return [self.arreglo, self.indice, self.expresion]
+
+    def generar(self, gen):
+        if isinstance(self.arreglo, Identificador):
+            variable = gen.entorno.buscar(self.arreglo.nombre)
+            if variable is not None and not variable.mutable:
+                errores.semantico(
+                    f"'{self.arreglo.nombre}' no es mutable: "
+                    f"declarala con 'let mut'.",
+                    self.linea, self.columna, self.arreglo.nombre)
+                return
+
+        gen.comentario('a[i] = ...')
+        self.arreglo.generar(gen)
+        gen.emitir('str x0, [sp, #-16]!', 'guardar el puntero')
+        self.indice.generar(gen)
+        gen.emitir('ldr x1, [sp], #16', 'recuperar el puntero')
+        gen.emitir('add x1, x1, w0, sxtw #3', 'puntero + indice * 8')
+        gen.emitir('str x1, [sp, #-16]!', 'guardar la direccion destino')
+        self.expresion.generar(gen)
+        gen.emitir('ldr x1, [sp], #16', 'recuperar la direccion destino')
+        gen.emitir('str x0, [x1]', 'escribir el elemento')
+        
 class Retorno(Instruccion):
     def __init__(self, expresion, linea=0, columna=0):
         super().__init__(linea, columna)
@@ -716,21 +790,22 @@ class Para(Instruccion):
         gen.entorno.abrir()
 
         self.iterable.inicio.generar(gen)
-        contador = gen.entorno.declarar(self.variable, Tipo.I32, True)
-        gen.emitir(f'str x0, {contador.direccion()}',
+        contador = gen.entorno.declarar(self.variable, Tipo.I32, True,
+                                        linea=self.linea)
+        gen.acceso('str', 'x0', contador.offset,
                    f'{self.variable} = inicio del rango')
 
         self.iterable.fin.generar(gen)
         limite = gen.entorno.declarar(f'$fin_{self.variable}', Tipo.I32)
-        gen.emitir(f'str x0, {limite.direccion()}', 'limite del rango')
+        gen.acceso('str', 'x0', limite.offset, 'limite del rango')
 
         inicio = gen.nueva_etiqueta('Lfor')
         paso = gen.nueva_etiqueta('Lpaso')
         fin = gen.nueva_etiqueta('Lfin')
 
         gen.etiqueta(inicio)
-        gen.emitir(f'ldr x0, {contador.direccion()}', f'leer {self.variable}')
-        gen.emitir(f'ldr x1, {limite.direccion()}', 'leer el limite')
+        gen.acceso('ldr', 'x0', contador.offset, f'leer {self.variable}')
+        gen.acceso('ldr', 'x1', limite.offset, 'leer el limite')
         gen.emitir('cmp w0, w1')
         gen.emitir(f'b.ge {fin}', 'rango exclusivo: corta antes del limite')
 
@@ -740,9 +815,9 @@ class Para(Instruccion):
         gen.bucles.pop()
 
         gen.etiqueta(paso)
-        gen.emitir(f'ldr x0, {contador.direccion()}')
+        gen.acceso('ldr', 'x0', contador.offset)
         gen.emitir('add w0, w0, #1', 'siguiente valor')
-        gen.emitir(f'str x0, {contador.direccion()}')
+        gen.acceso('str', 'x0', contador.offset)
         gen.emitir(f'b {inicio}', 'volver a comprobar')
 
         gen.etiqueta(fin)
@@ -760,6 +835,54 @@ class Match(Instruccion):
 
     def hijos(self):
         return [self.expresion] + list(self.brazos)
+
+    def generar(self, gen):
+        gen.comentario('match')
+        fin = gen.nueva_etiqueta('Lfinmatch')
+
+        gen.entorno.abrir()
+        self.expresion.generar(gen)
+        oculto = gen.nueva_etiqueta('$match')
+        guardado = gen.entorno.declarar(oculto, self.expresion.tipo)
+        gen.acceso('str', 'x0', guardado.offset,
+                   'guardar el valor evaluado del match')
+
+        for brazo in self.brazos:
+            if brazo.patron is None:
+                gen.comentario('brazo _  (por defecto)')
+                brazo.cuerpo.generar(gen)
+                gen.emitir(f'b {fin}')
+                continue
+
+            siguiente = gen.nueva_etiqueta('Lbrazo')
+
+            if isinstance(brazo.patron, Rango):
+                gen.comentario('brazo con rango')
+                brazo.patron.inicio.generar(gen)
+                gen.emitir('mov w1, w0', 'inicio del rango')
+                gen.acceso('ldr', 'x0', guardado.offset)
+                gen.emitir('cmp w0, w1')
+                gen.emitir(f'b.lt {siguiente}', 'por debajo del inicio')
+
+                brazo.patron.fin.generar(gen)
+                gen.emitir('mov w1, w0', 'fin del rango')
+                gen.acceso('ldr', 'x0', guardado.offset)
+                gen.emitir('cmp w0, w1')
+                gen.emitir(f'b.gt {siguiente}', 'por encima del fin (inclusivo)')
+            else:
+                gen.comentario('brazo con valor')
+                brazo.patron.generar(gen)
+                gen.emitir('mov w1, w0', 'valor del patron')
+                gen.acceso('ldr', 'x0', guardado.offset)
+                gen.emitir('cmp w0, w1')
+                gen.emitir(f'b.ne {siguiente}', 'no coincide')
+
+            brazo.cuerpo.generar(gen)
+            gen.emitir(f'b {fin}', 'brazo ejecutado: salir del match')
+            gen.etiqueta(siguiente)
+
+        gen.etiqueta(fin)
+        gen.entorno.cerrar()
 
 
 class BrazoMatch(Nodo):
@@ -831,6 +954,36 @@ class Arreglo(Expresion):
     def hijos(self):
         return list(self.elementos) + ([self.repeticiones]
                                        if self.repeticiones else [])
+    def generar(self, gen):
+        self.tipo = Tipo.ARREGLO
+
+        if self.repeticiones is not None:
+            if (not isinstance(self.repeticiones, Literal)
+                    or self.repeticiones.tipo != Tipo.I32):
+                errores.semantico(
+                    'El tamano de [valor; n] tiene que ser un entero literal.',
+                    self.linea, self.columna, 'n')
+                gen.emitir('mov x0, #0', 'valor de recuperacion')
+                return
+            cantidad = int(self.repeticiones.valor)
+            valores = [self.elementos[0]] * cantidad
+        else:
+            valores = self.elementos
+            cantidad = len(valores)
+
+        gen.comentario(f'arreglo de {cantidad} elemento(s)')
+        base = gen.entorno.reservar(cantidad + 1)
+
+        gen.emitir(f'mov w0, #{cantidad}')
+        gen.acceso('str', 'x0', base, 'cabecera: longitud')
+
+        for indice, elemento in enumerate(valores):
+            elemento.generar(gen)
+            gen.acceso('str', 'x0', base + (indice + 1) * TAMANO,
+                       f'elemento {indice}')
+
+        gen.emitir(f'sub x0, x29, #{-(base + TAMANO)}',
+                   'dejar en x0 la direccion del elemento 0')
 
 
 class Indice(Expresion):
@@ -844,6 +997,15 @@ class Indice(Expresion):
 
     def hijos(self):
         return [self.arreglo, self.indice]
+
+    def generar(self, gen):
+        gen.comentario('acceso a[i]')
+        self.arreglo.generar(gen)
+        gen.emitir('str x0, [sp, #-16]!', 'guardar el puntero del arreglo')
+        self.indice.generar(gen)
+        gen.emitir('ldr x1, [sp], #16', 'recuperar el puntero')
+        gen.emitir('add x1, x1, w0, sxtw #3', 'puntero + indice * 8')
+        gen.emitir('ldr x0, [x1]', 'leer el elemento')
 
 
 class LlamadaMetodo(Expresion):
