@@ -18,6 +18,11 @@ def _tipo_estatico(gen, expresion):
         variable = gen.entorno.buscar(expresion.nombre)
         if variable is not None:
             return variable.tipo
+
+    if isinstance(expresion, Llamada):
+        funcion = gen.funciones.get(expresion.nombre)
+        if funcion is not None:
+            return funcion.tipo_retorno or Tipo.NULO
     return expresion.tipo
 
 class Nodo: 
@@ -44,6 +49,8 @@ class Nodo:
 class Expresion(Nodo):
     """deja su resultado en w0"""
     tipo = Tipo.I32
+    # Solo se usa cuando `tipo` es ARREGLO: de que tipo son sus elementos.
+    tipo_elemento = None
 
 class Instruccion(Nodo):
     """el efecto"""
@@ -235,6 +242,11 @@ class LlamadaMacro(Instruccion):
             gen.emitir('bl print_cstr')
             gen.emitir('add sp, sp, #16', 'devolver la pila')
 
+        elif expresion.tipo == Tipo.NULO:
+            nombre = gen.cadena('None')
+            gen.emitir(f'ldr x1, ={nombre}', 'valor nulo')
+            gen.emitir('bl print_cstr')
+
         else:
             gen.emitir('bl print_num')
 
@@ -404,6 +416,7 @@ class Identificador(Expresion):
             return
 
         self.tipo = variable.tipo
+        self.tipo_elemento = variable.tipo_elemento
         gen.acceso('ldr', 'x0', variable.offset,
                    f'leer {self.nombre}')
 
@@ -453,9 +466,26 @@ class Llamada(Expresion):
                     self.linea, self.columna, 'typeof')
                 gen.emitir('mov w0, #0', 'valor de recuperacion')
                 return
+            
             tipo = _tipo_estatico(gen, self.argumentos[0])
             nombre = gen.cadena(str(tipo))
             gen.emitir(f'ldr x0, ={nombre}', f'typeof -> {tipo}')
+            return
+        if self.nombre == 'random':
+            self.tipo = Tipo.I32
+            if len(self.argumentos) != 2:
+                errores.semantico(
+                    "'random' espera 2 argumentos (min, max).",
+                    self.linea, self.columna, 'random')
+                gen.emitir('mov w0, #0', 'valor de recuperacion')
+                return
+            gen.comentario('random(min, max)')
+            self.argumentos[0].generar(gen)
+            gen.emitir('str x0, [sp, #-16]!', 'apilar el minimo')
+            self.argumentos[1].generar(gen)
+            gen.emitir('mov w1, w0', 'el maximo va en w1')
+            gen.emitir('ldr x0, [sp], #16', 'el minimo vuelve a w0')
+            gen.emitir('bl random')
             return
 
         funcion = gen.funciones.get(self.nombre)
@@ -475,7 +505,8 @@ class Llamada(Expresion):
             gen.emitir('mov w0, #0', 'valor de recuperacion')
             return
 
-        self.tipo = funcion.tipo_retorno or Tipo.I32
+       
+        self.tipo = funcion.tipo_retorno or Tipo.NULO
 
         gen.comentario(f'llamada a {self.nombre}')
         for argumento in self.argumentos:
@@ -547,8 +578,9 @@ class DeclaracionVariable(Instruccion):
             gen.emitir('mov w0, #0', 'sin valor inicial')
             tipo = self.tipo or Tipo.I32
 
+        elemento = self.expresion.tipo_elemento if self.expresion else None
         variable = entorno.declarar(self.nombre, tipo, self.mutable,
-                                    linea=self.linea)
+                                    linea=self.linea, tipo_elemento=elemento)
         gen.acceso('str', 'x0', variable.offset,
                    f'let {self.nombre} = ...')
 
@@ -1003,6 +1035,9 @@ class Arreglo(Expresion):
             gen.acceso('str', 'x0', base + (indice + 1) * TAMANO,
                        f'elemento {indice}')
 
+        if valores:
+            self.tipo_elemento = valores[0].tipo
+
         gen.emitir(f'sub x0, x29, #{-(base + TAMANO)}',
                    'dejar en x0 la direccion del elemento 0')
 
@@ -1027,6 +1062,8 @@ class Indice(Expresion):
         gen.emitir('ldr x1, [sp], #16', 'recuperar el puntero')
         gen.emitir('add x1, x1, w0, sxtw #3', 'puntero + indice * 8')
         gen.emitir('ldr x0, [x1]', 'leer el elemento')
+        if self.arreglo.tipo_elemento is not None:
+            self.tipo = self.arreglo.tipo_elemento
 
 
 class LlamadaMetodo(Expresion):
@@ -1045,6 +1082,58 @@ class LlamadaMetodo(Expresion):
     def generar(self, gen):
         self.receptor.generar(gen)
         tipo = self.receptor.tipo
+
+        if self.metodo == 'contains':
+            self.tipo = Tipo.BOOL
+            if len(self.argumentos) != 1:
+                errores.semantico(
+                    "'.contains()' espera 1 argumento.",
+                    self.linea, self.columna, self.metodo)
+                gen.emitir('mov w0, #0', 'valor de recuperacion')
+                return
+            gen.emitir('str x0, [sp, #-16]!', 'apilar el receptor')
+            self.argumentos[0].generar(gen)
+            gen.emitir('mov x2, x0', 'lo buscado va en x2')
+            gen.emitir('ldr x1, [sp], #16', 'el receptor va en x1')
+            if tipo == Tipo.ARREGLO:
+                gen.emitir('bl array_contains')
+            else:
+                gen.emitir('bl str_contains')
+            return
+
+        if self.metodo == 'replace':
+            self.tipo = Tipo.STRING
+            if len(self.argumentos) != 2:
+                errores.semantico(
+                    "'.replace()' espera 2 argumentos (viejo, nuevo).",
+                    self.linea, self.columna, self.metodo)
+                gen.emitir('mov w0, #0', 'valor de recuperacion')
+                return
+            gen.emitir('str x0, [sp, #-16]!', 'apilar la cadena')
+            self.argumentos[0].generar(gen)
+            gen.emitir('str x0, [sp, #-16]!', 'apilar lo viejo')
+            self.argumentos[1].generar(gen)
+            gen.emitir('mov x3, x0', 'lo nuevo va en x3')
+            gen.emitir('ldr x2, [sp], #16', 'lo viejo va en x2')
+            gen.emitir('ldr x1, [sp], #16', 'la cadena va en x1')
+            gen.emitir('bl str_replace')
+            return
+
+        if self.metodo == 'split':
+            self.tipo = Tipo.ARREGLO
+            if len(self.argumentos) != 1:
+                errores.semantico(
+                    "'.split()' espera 1 argumento (el separador).",
+                    self.linea, self.columna, self.metodo)
+                gen.emitir('mov w0, #0', 'valor de recuperacion')
+                return
+            gen.emitir('str x0, [sp, #-16]!', 'apilar la cadena')
+            self.argumentos[0].generar(gen)
+            gen.emitir('mov x2, x0', 'el separador va en x2')
+            gen.emitir('ldr x1, [sp], #16', 'la cadena va en x1')
+            gen.emitir('bl str_split')
+            self.tipo_elemento = Tipo.STRING
+            return
 
         if self.argumentos and self.metodo in ('len', 'to_uppercase',
                                                'to_lowercase', 'reverse'):
@@ -1091,6 +1180,28 @@ class Prestamo(Expresion):
 
     def hijos(self):
         return [self.expresion]
+
+    def generar(self, gen):
+        interno = self.expresion
+
+        if isinstance(interno, Indice) and isinstance(interno.indice, Rango):
+            self.tipo = Tipo.ARREGLO
+            gen.comentario('slice &a[i..j]')
+            interno.arreglo.generar(gen)
+            gen.emitir('str x0, [sp, #-16]!', 'apilar el puntero')
+            interno.indice.inicio.generar(gen)
+            gen.emitir('str x0, [sp, #-16]!', 'apilar el inicio')
+            interno.indice.fin.generar(gen)
+            gen.emitir('mov w3, w0', 'el fin va en w3')
+            gen.emitir('ldr x2, [sp], #16', 'el inicio va en w2')
+            gen.emitir('ldr x1, [sp], #16', 'el puntero va en x1')
+            gen.emitir('bl array_slice')
+            self.tipo_elemento = interno.arreglo.tipo_elemento
+            return
+
+        interno.generar(gen)
+        self.tipo = interno.tipo
+        self.tipo_elemento = interno.tipo_elemento
 
 
 class Campo(Nodo):

@@ -1,0 +1,21 @@
+fn main() {
+    let f = "hola mundo hola gente";
+    println!("{}", f.contains("mundo"));
+    println!("{}", f.contains("zzz"));
+    println!(f.replace("hola", "CHAU"));
+    println!(f.replace("hola", "zz"));
+    println!(f);
+
+    let a = [10, 20, 30, 40];
+    println!("{}", a.contains(30));
+    println!("{}", a.contains(99));
+
+    let mut i = 0;
+    while i < 8 {
+        let d = random(1, 6);
+        if d < 1 { println!("FUERA DE RANGO"); }
+        if d > 6 { println!("FUERA DE RANGO"); }
+        i += 1;
+    }
+    println!("random ok");
+}

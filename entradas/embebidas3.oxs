@@ -1,0 +1,21 @@
+fn saludar() { println!("hola"); }
+fn doble(x: i32) -> i32 { return x * 2; }
+
+fn main() {
+    let a = [10, 20, 30, 40, 50];
+    let s = &a[1..4];
+    println!("slice: {} elementos", s.len());
+    println!("{} {} {}", s[0], s[1], s[2]);
+
+    let r = &a;
+    println!("prestamo simple: {}", r.len());
+
+    let csv = "uno,dos,tres";
+    let partes = csv.split(",");
+    println!("trozos = {}", partes.len());
+    println!("{} / {} / {}", partes[0], partes[1], partes[2]);
+
+    println!(typeof(saludar()));
+    println!(typeof(doble(2)));
+    println!(saludar());
+}

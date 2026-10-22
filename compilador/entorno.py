@@ -10,9 +10,12 @@ TAMANO = 8
 class Variable:
     """Lo que el compilador necesita recordar de una variable."""
 
-    def __init__(self, nombre, tipo, offset, mutable=False):
+    def __init__(self, nombre, tipo, offset, mutable=False,
+                 tipo_elemento=None):
         self.nombre = nombre
         self.tipo = tipo
+        # De que tipo son los elementos, si `tipo` es un arreglo.
+        self.tipo_elemento = tipo_elemento
         self.offset = offset        
         self.mutable = mutable
 
@@ -62,13 +65,14 @@ class Entorno:
     # ------------------------------------------------------------------
 
     def declarar(self, nombre, tipo, mutable=False, linea=0,
-                 categoria='Variable'):
+                 categoria='Variable', tipo_elemento=None):
         """Le asigna un offset a `nombre` y devuelve la Variable."""
         self.desplazamiento += TAMANO
         if self.desplazamiento > self.maximo:
             self.maximo = self.desplazamiento
 
-        variable = Variable(nombre, tipo, -self.desplazamiento, mutable)
+        variable = Variable(nombre, tipo, -self.desplazamiento, mutable,
+                            tipo_elemento)
         self.ambitos[-1][nombre] = variable
 
         if not nombre.startswith('$'):
