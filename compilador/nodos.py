@@ -7,10 +7,18 @@ NO_SOPORTADO = {
     'DeclaracionStruct': 'los structs',
     'InstanciaStruct': 'los structs',
     'AccesoCampo': 'el acceso a campos de struct',
-    'LlamadaMetodo': 'los metodos (.len(), .to_uppercase(), ...)',
     'LlamadaString': 'String::from',
     'Prestamo': 'los prestamos y slices (&)',
 }
+
+
+def _tipo_estatico(gen, expresion):
+    """Averigua el tipo de una expresion SIN generar codigo para ella."""
+    if isinstance(expresion, Identificador):
+        variable = gen.entorno.buscar(expresion.nombre)
+        if variable is not None:
+            return variable.tipo
+    return expresion.tipo
 
 class Nodo: 
     def __init__ (self, linea = 0, columna = 0):
@@ -437,6 +445,19 @@ class Llamada(Expresion):
         return list(self.argumentos)
 
     def generar(self, gen):
+        if self.nombre == 'typeof':
+            self.tipo = Tipo.STRING
+            if len(self.argumentos) != 1:
+                errores.semantico(
+                    "'typeof' espera 1 argumento.",
+                    self.linea, self.columna, 'typeof')
+                gen.emitir('mov w0, #0', 'valor de recuperacion')
+                return
+            tipo = _tipo_estatico(gen, self.argumentos[0])
+            nombre = gen.cadena(str(tipo))
+            gen.emitir(f'ldr x0, ={nombre}', f'typeof -> {tipo}')
+            return
+
         funcion = gen.funciones.get(self.nombre)
 
         if funcion is None:
@@ -1020,6 +1041,44 @@ class LlamadaMetodo(Expresion):
 
     def hijos(self):
         return [self.receptor] + list(self.argumentos)
+
+    def generar(self, gen):
+        self.receptor.generar(gen)
+        tipo = self.receptor.tipo
+
+        if self.argumentos and self.metodo in ('len', 'to_uppercase',
+                                               'to_lowercase', 'reverse'):
+            errores.semantico(
+                f"'.{self.metodo}()' no lleva argumentos.",
+                self.linea, self.columna, self.metodo)
+
+        if self.metodo == 'len':
+            self.tipo = Tipo.I32
+            if tipo == Tipo.ARREGLO:
+                gen.emitir('ldr x0, [x0, #-8]', 'longitud en la cabecera')
+            else:
+                gen.emitir('mov x1, x0')
+                gen.emitir('bl strlen', 'deja la longitud en x2')
+                gen.emitir('mov w0, w2')
+            return
+
+        if self.metodo in ('to_uppercase', 'to_lowercase'):
+            self.tipo = Tipo.STRING
+            rutina = 'to_upper' if self.metodo == 'to_uppercase' else 'to_lower'
+            gen.emitir('mov x1, x0', 'la cadena va en x1')
+            gen.emitir(f'bl {rutina}')
+            return
+
+        if self.metodo == 'reverse':
+            self.tipo = Tipo.ARREGLO
+            gen.emitir('mov x1, x0', 'el puntero va en x1')
+            gen.emitir('bl array_reverse')
+            return
+
+        errores.semantico(
+            f"El metodo '.{self.metodo}()' todavia no esta soportado.",
+            self.linea, self.columna, self.metodo)
+        gen.emitir('mov w0, #0', 'valor de recuperacion')
 
 
 class Prestamo(Expresion):

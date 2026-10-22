@@ -23,6 +23,8 @@ from .parser import analizar
 # La carpeta del proyecto es la de arriba de compilador/
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IO_S = os.path.join(RAIZ, 'io.s')
+RUNTIME_S = os.path.join(RAIZ, 'runtime.s')
+RUNTIME_S = os.path.join(RAIZ, 'runtime.s')
 
 ENSAMBLADOR = 'aarch64-linux-gnu-as'
 ENLAZADOR = 'aarch64-linux-gnu-ld'
@@ -54,14 +56,16 @@ def _correr_orden(orden, limite, entrada=''):
 
 def ensamblar_y_correr(asm, entrada=''):
     """Ensambla, enlaza con io.s y ejecuta en QEMU. Devuelve lo que imprimio."""
-    if not os.path.exists(IO_S):
-        raise FalloDeHerramienta(
-            f'No se encontro la libreria de rutinas en {IO_S}')
+    for ruta in (IO_S, RUNTIME_S):
+        if not os.path.exists(ruta):
+            raise FalloDeHerramienta(
+                f'No se encontro la libreria de rutinas en {ruta}')
 
     with tempfile.TemporaryDirectory(prefix='oxigen_') as carpeta:
         ruta_s = os.path.join(carpeta, 'programa.s')
         obj_programa = os.path.join(carpeta, 'programa.o')
         obj_io = os.path.join(carpeta, 'io.o')
+        obj_runtime = os.path.join(carpeta, 'runtime.o')
         ejecutable = os.path.join(carpeta, 'programa')
 
         with open(ruta_s, 'w', encoding='utf-8') as archivo:
@@ -79,8 +83,14 @@ def ensamblar_y_correr(asm, entrada=''):
             raise FalloDeHerramienta(
                 'No se pudo ensamblar io.s:\n' + paso.stderr)
 
-        paso = _correr_orden([ENLAZADOR, '-o', ejecutable,
-                              obj_programa, obj_io], LIMITE_HERRAMIENTA)
+        paso = _correr_orden([ENSAMBLADOR, '-o', obj_runtime, RUNTIME_S],
+                             LIMITE_HERRAMIENTA)
+        if paso.returncode != 0:
+            raise FalloDeHerramienta(
+                'No se pudo ensamblar runtime.s:\n' + paso.stderr)
+
+        paso = _correr_orden([ENLAZADOR, '-o', ejecutable, obj_programa,
+                              obj_runtime, obj_io], LIMITE_HERRAMIENTA)
         if paso.returncode != 0:
             raise FalloDeHerramienta('El enlazado fallo:\n' + paso.stderr)
 
@@ -111,7 +121,7 @@ def compilar(codigo, entrada='', ejecutar=True):
                 f'Error interno del compilador: '
                 f'{type(fallo).__name__}: {fallo}', 0, 0)
             ensamblador = ''
-            
+
     salida = ''
     if ejecutar and ensamblador and not errores.hay_errores():
         try:

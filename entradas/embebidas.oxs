@@ -1,0 +1,19 @@
+fn main() {
+    let s = "Hola Mundo";
+    println!(s.to_uppercase());
+    println!(s.to_lowercase());
+    println!(s);
+    println!("largo = {}", s.len());
+
+    let a = [10, 20, 30, 40, 50];
+    println!("elementos = {}", a.len());
+
+    let mut b = [1, 2, 3, 4, 5];
+    b.reverse();
+    println!("{} {} {} {} {}", b[0], b[1], b[2], b[3], b[4]);
+
+    let n = 42;
+    let f = true;
+    println!("{} / {} / {}", typeof(n), typeof(f), typeof(s));
+    println!(typeof(a));
+}
