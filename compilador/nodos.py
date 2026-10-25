@@ -1,3 +1,5 @@
+import re
+
 from .tipos import Tipo
 from .errores import errores
 from .entorno import Entorno, TAMANO
@@ -7,9 +9,22 @@ NO_SOPORTADO = {
     'DeclaracionStruct': 'los structs',
     'InstanciaStruct': 'los structs',
     'AccesoCampo': 'el acceso a campos de struct',
-    'LlamadaString': 'String::from',
     'Prestamo': 'los prestamos y slices (&)',
 }
+
+
+# Codigos que entiende print_arreglo en runtime.s
+_CODIGO_ELEMENTO = {Tipo.I32: 0, Tipo.STRING: 1, Tipo.BOOL: 2,
+                    Tipo.CHAR: 3, Tipo.F64: 4}
+
+
+def _normalizar(tipo):
+    """'[i32; 5]' -> (ARREGLO, 'i32').  Cualquier otro tipo queda igual."""
+    if isinstance(tipo, str) and tipo.startswith('['):
+        adentro = tipo[1:-1].split(';')[0].strip()
+        interno, _ = _normalizar(adentro)
+        return Tipo.ARREGLO, interno
+    return tipo, None
 
 
 def _tipo_estatico(gen, expresion):
@@ -115,6 +130,10 @@ class Binaria(Expresion):
         derecho = self.derecha.tipo
         gen.emitir('ldr x1, [sp], #16', 'recuperar lado izquierdo')
 
+        if Tipo.STRING in (izquierdo, derecho):
+            self._cadena(gen, izquierdo, derecho)
+            return
+
         if Tipo.F64 in (izquierdo, derecho):
             self._flotante(gen, izquierdo, derecho)
             return
@@ -137,6 +156,44 @@ class Binaria(Expresion):
             gen.emitir(f'cset w0, {condiciones[self.operador]}',
                        'w0 = 1 si se cumple, 0 si no')
 
+    def _cadena(self, gen, izquierdo, derecho):
+        """Operaciones con String. Llega izquierda en x1 y derecha en x0."""
+        if (self.operador == '+'
+                and izquierdo == Tipo.STRING and derecho == Tipo.STRING):
+            gen.emitir('mov x2, x0', 'la segunda cadena va en x2')
+            gen.emitir('bl str_concat', 'concatenar')
+            self.tipo = Tipo.STRING
+            return
+
+        if (self.operador in ('==', '!=')
+                and izquierdo == Tipo.STRING and derecho == Tipo.STRING):
+            gen.emitir('mov x2, x0', 'la segunda cadena va en x2')
+            gen.emitir('bl str_equals')
+            if self.operador == '!=':
+                gen.emitir('eor w0, w0, #1', 'negar el resultado')
+            self.tipo = Tipo.BOOL
+            return
+
+        if self.operador == '*' and izquierdo == Tipo.STRING:
+            gen.emitir('mov w2, w0', 'las veces van en w2')
+            gen.emitir('bl str_repeat', 'repetir la cadena')
+            self.tipo = Tipo.STRING
+            return
+
+        if self.operador == '*' and derecho == Tipo.STRING:
+            gen.emitir('mov w2, w1', 'las veces van en w2')
+            gen.emitir('mov x1, x0', 'la cadena va en x1')
+            gen.emitir('bl str_repeat', 'repetir la cadena')
+            self.tipo = Tipo.STRING
+            return
+
+        errores.semantico(
+            f"No es posible aplicar el operador '{self.operador}' entre los "
+            f"tipos {izquierdo} y {derecho}.",
+            self.linea, self.columna, self.operador)
+        gen.emitir('mov x0, #0', 'valor de recuperacion')
+        self.tipo = Tipo.NULO
+
     def _flotante(self, gen, izquierdo, derecho):
         """Opera en punto flotante. Llega izquierda en x1 y derecha en x0."""
         if izquierdo == Tipo.F64:
@@ -158,10 +215,11 @@ class Binaria(Expresion):
             return
 
         if self.operador == '%':
-            errores.semantico(
-                "El operador '%' no se aplica a f64.",
-                self.linea, self.columna, '%')
-            gen.emitir('mov x0, #0', 'valor de recuperacion')
+            # ARM64 no tiene resto en flotante: a % b = a - trunc(a/b)*b
+            gen.emitir('fdiv d2, d1, d0', 'cociente')
+            gen.emitir('frintz d2, d2', 'truncar hacia cero')
+            gen.emitir('fmsub d0, d2, d0, d1', 'resto = izq - cociente*der')
+            gen.emitir('fmov x0, d0')
             self.tipo = Tipo.F64
             return
 
@@ -218,7 +276,8 @@ class LlamadaMacro(Instruccion):
             primero = self.argumentos[0]
             es_plantilla = (isinstance(primero, Literal)
                             and primero.tipo == Tipo.STRING
-                            and '{}' in primero.valor)
+                            and ('{}' in primero.valor
+                                 or '{:?}' in primero.valor))
 
             if es_plantilla:
                 self._plantilla(gen, primero.valor, self.argumentos[1:])
@@ -232,20 +291,31 @@ class LlamadaMacro(Instruccion):
     # ------------------------------------------------------------------
 
     def _plantilla(self, gen, plantilla, valores):
-        """Intercala los trozos de texto con los valores."""
-        trozos = plantilla.split('{}')
-        huecos = len(trozos) - 1
+        """Intercala los trozos de texto con los valores.
 
-        if huecos != len(valores):
+        Hay dos marcadores: {} imprime normal y {:?} imprime en formato de
+        depuracion, que para los arreglos es  [10, 20, 30].
+        """
+        # re.split con un grupo deja los separadores dentro de la lista:
+        # 'a{}b' -> ['a', '{}', 'b']
+        piezas = re.split(r'(\{\}|\{:\?\})', plantilla)
+        marcadores = [x for x in piezas if x in ('{}', '{:?}')]
+
+        if len(marcadores) != len(valores):
             errores.semantico(
-                f"La plantilla tiene {huecos} hueco(s) y se pasaron "
+                f"La plantilla tiene {len(marcadores)} hueco(s) y se pasaron "
                 f"{len(valores)} valor(es).",
                 self.linea, self.columna, plantilla)
 
-        for posicion, trozo in enumerate(trozos):
-            self._texto(gen, trozo)
-            if posicion < len(valores):
-                self._valor(gen, valores[posicion])
+        siguiente = 0
+        for pieza in piezas:
+            if pieza in ('{}', '{:?}'):
+                if siguiente < len(valores):
+                    self._valor(gen, valores[siguiente],
+                                depuracion=(pieza == '{:?}'))
+                    siguiente += 1
+            else:
+                self._texto(gen, pieza)
 
     def _texto(self, gen, texto):
         """Imprime un literal de texto fijo."""
@@ -255,11 +325,18 @@ class LlamadaMacro(Instruccion):
         gen.emitir(f'ldr x1, ={nombre}', 'trozo de la plantilla')
         gen.emitir('bl print_cstr')
 
-    def _valor(self, gen, expresion):
+    def _valor(self, gen, expresion, depuracion=False):
         """Imprime una expresion segun su tipo."""
         expresion.generar(gen)
 
-        if expresion.tipo == Tipo.STRING:
+        if expresion.tipo == Tipo.ARREGLO:
+            codigo = _CODIGO_ELEMENTO.get(expresion.tipo_elemento, 0)
+            gen.emitir('mov x1, x0', 'el puntero del arreglo va en x1')
+            gen.emitir(f'mov w2, #{codigo}',
+                       f'elementos de tipo {expresion.tipo_elemento or "i32"}')
+            gen.emitir('bl print_arreglo')
+
+        elif expresion.tipo == Tipo.STRING:
             gen.emitir('mov x1, x0', 'print_cstr recibe la direccion en x1')
             gen.emitir('bl print_cstr')
 
@@ -378,9 +455,11 @@ class Funcion(Nodo):
             # Los parametros se declaran mutables: en el cuerpo son una copia
             # local, y los arreglos llegan como puntero, asi que funciones como
             # sort_array() necesitan poder escribir sobre ellos.
+            tipo_par, elemento_par = _normalizar(parametro.tipo)
             variable = gen.entorno.declarar(
-                parametro.nombre, parametro.tipo, True,
-                linea=parametro.linea, categoria='Parámetro')
+                parametro.nombre, tipo_par, True,
+                linea=parametro.linea, categoria='Parámetro',
+                tipo_elemento=elemento_par)
             gen.acceso('str', f'x{indice}', variable.offset,
                        f'guardar parametro {parametro.nombre}')
 
@@ -575,7 +654,7 @@ class Llamada(Expresion):
             return
 
        
-        self.tipo = funcion.tipo_retorno or Tipo.NULO
+        self.tipo = _normalizar(funcion.tipo_retorno)[0] or Tipo.NULO
 
         gen.comentario(f'llamada a {self.nombre}')
         for argumento in self.argumentos:
@@ -600,6 +679,24 @@ class LlamadaString(Expresion):
 
     def etiqueta(self):
         return f'String::{self.metodo}'
+
+    def generar(self, gen):
+        self.tipo = Tipo.STRING
+        if self.metodo != 'from':
+            errores.semantico(
+                f"'String::{self.metodo}' no esta soportado.",
+                self.linea, self.columna, self.metodo)
+            gen.emitir('mov x0, #0', 'valor de recuperacion')
+            return
+        if len(self.argumentos) != 1:
+            errores.semantico(
+                "'String::from' espera 1 argumento.",
+                self.linea, self.columna, 'from')
+            gen.emitir('mov x0, #0', 'valor de recuperacion')
+            return
+        # El texto ya vive en .data y la expresion deja su direccion en x0:
+        # construir un String es, para este compilador, no hacer nada.
+        self.argumentos[0].generar(gen)
 
     def hijos(self):
         return list(self.argumentos)
@@ -640,12 +737,19 @@ class DeclaracionVariable(Instruccion):
                 self.linea, self.columna, self.nombre)
             return
 
+        declarado, elemento_declarado = _normalizar(self.tipo)
+
         if self.expresion:
             self.expresion.generar(gen)
-            tipo = self.tipo or self.expresion.tipo
+            tipo = declarado or self.expresion.tipo
         else:
-            gen.emitir('mov w0, #0', 'sin valor inicial')
-            tipo = self.tipo or Tipo.I32
+            tipo = declarado or Tipo.I32
+            if tipo == Tipo.STRING:
+                # Un puntero nulo haria que print_cstr se caiga: usamos "".
+                vacia = gen.cadena('')
+                gen.emitir(f'ldr x0, ={vacia}', 'cadena vacia por defecto')
+            else:
+                gen.emitir('mov w0, #0', 'sin valor inicial')
 
         if (tipo == Tipo.F64 and self.expresion is not None
                 and self.expresion.tipo != Tipo.F64):
@@ -653,6 +757,8 @@ class DeclaracionVariable(Instruccion):
             gen.emitir('fmov x0, d0')
 
         elemento = self.expresion.tipo_elemento if self.expresion else None
+        if elemento is None:
+            elemento = elemento_declarado
         variable = entorno.declarar(self.nombre, tipo, self.mutable,
                                     linea=self.linea, tipo_elemento=elemento)
         gen.acceso('str', 'x0', variable.offset,
@@ -732,9 +838,10 @@ class Asignacion(Instruccion):
 
         simbolo = self.operador[0]
         if simbolo == '%':
-            errores.semantico(
-                "El operador '%=' no se aplica a f64.",
-                self.linea, self.columna, self.operador)
+            gen.emitir('fdiv d2, d0, d1', 'cociente')
+            gen.emitir('frintz d2, d2', 'truncar hacia cero')
+            gen.emitir('fmsub d0, d2, d1, d0', 'resto')
+            gen.emitir('fmov x0, d0')
             return
         instruccion = {'+': 'fadd', '-': 'fsub',
                        '*': 'fmul', '/': 'fdiv'}[simbolo]
@@ -1132,20 +1239,27 @@ class Arreglo(Expresion):
             cantidad = len(valores)
 
         gen.comentario(f'arreglo de {cantidad} elemento(s)')
-        base = gen.entorno.reservar(cantidad + 1)
 
-        gen.emitir(f'mov w0, #{cantidad}')
-        gen.acceso('str', 'x0', base, 'cabecera: longitud')
+        # El arreglo va al monton y no a la pila: asi sobrevive al retorno de
+        # la funcion que lo creo (fn f() -> [i32; 6] { let r = [...]; r })
+        puntero = gen.entorno.declarar(gen.nueva_etiqueta('$arr'), Tipo.ARREGLO)
+        gen.emitir(f'mov x0, #{(cantidad + 1) * TAMANO}', 'bytes a reservar')
+        gen.emitir('bl alloc')
+        gen.emitir(f'mov w1, #{cantidad}')
+        gen.emitir('str x1, [x0]', 'cabecera: longitud')
+        gen.emitir(f'add x0, x0, #{TAMANO}', 'apuntar al elemento 0')
+        gen.acceso('str', 'x0', puntero.offset, 'guardar el puntero')
 
         for indice, elemento in enumerate(valores):
             elemento.generar(gen)
-            gen.acceso('str', 'x0', base + (indice + 1) * TAMANO,
-                       f'elemento {indice}')
+            gen.emitir('mov x2, x0', 'el valor del elemento')
+            gen.acceso('ldr', 'x1', puntero.offset, 'recuperar el puntero')
+            gen.emitir(f'str x2, [x1, #{indice * TAMANO}]', f'elemento {indice}')
 
         if valores:
             self.tipo_elemento = valores[0].tipo
 
-        gen.emitir(f'sub x0, x29, #{-(base + TAMANO)}',
+        gen.acceso('ldr', 'x0', puntero.offset,
                    'dejar en x0 la direccion del elemento 0')
 
 

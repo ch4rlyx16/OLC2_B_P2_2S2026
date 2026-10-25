@@ -24,7 +24,6 @@ from .parser import analizar
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IO_S = os.path.join(RAIZ, 'io.s')
 RUNTIME_S = os.path.join(RAIZ, 'runtime.s')
-RUNTIME_S = os.path.join(RAIZ, 'runtime.s')
 
 ENSAMBLADOR = 'aarch64-linux-gnu-as'
 ENLAZADOR = 'aarch64-linux-gnu-ld'
@@ -112,7 +111,9 @@ def compilar(codigo, entrada='', ejecutar=True):
 
     generador = Generador()
     ensamblador = ''
-    if arbol is not None and not errores.hay_errores():
+    # Se genera aunque haya errores: el enunciado espera que el programa
+    # siga corriendo y los errores se reporten aparte.
+    if arbol is not None:
         try:
             arbol.generar(generador)
             ensamblador = generador.codigo()
@@ -123,7 +124,7 @@ def compilar(codigo, entrada='', ejecutar=True):
             ensamblador = ''
 
     salida = ''
-    if ejecutar and ensamblador and not errores.hay_errores():
+    if ejecutar and ensamblador:
         try:
             salida = ensamblar_y_correr(ensamblador, entrada)
         except FalloDeHerramienta as fallo:

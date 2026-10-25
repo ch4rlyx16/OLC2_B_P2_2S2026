@@ -13,11 +13,15 @@
 //    array_slice    x1 = puntero, w2 = inicio, w3 = fin  -> x0 = arreglo nuevo
 //    str_split      x1 = cadena, x2 = separador          -> x0 = arreglo de cadenas
 //    print_f64      d0 = numero    -> lo imprime con hasta 6 decimales
+//    print_arreglo  x1 = puntero, w2 = codigo    -> [10, 20, 30]
+//    str_concat     x1 = a, x2 = b   -> x0 = a seguida de b
+//    str_repeat     x1 = cadena, w2 = veces  -> x0 = la cadena repetida
+//    str_equals     x1 = a, x2 = b   -> w0 = 1 si son iguales
 // ============================================================================
 
 .bss
 .align 4
-monton:         .skip 65536
+monton:         .skip 1048576
 
 .data
 .align 3
@@ -144,6 +148,10 @@ rnd_estado:     .quad 0
 .global array_slice
 .global str_split
 .global print_f64
+.global print_arreglo
+.global str_concat
+.global str_repeat
+.global str_equals
 
 // ---------------------------------------------------------------------------
 //  rnd_siguiente() -> w0 = pseudoaleatorio no negativo
@@ -520,6 +528,7 @@ sp_salir:
 .data
 pf_menos:   .asciz "-"
 pf_punto:   .asciz "."
+pf_cero:    .asciz "0"
 
 .bss
 .align 3
@@ -560,7 +569,7 @@ pf_pos:
     scvtf   d2, x9
     fmul    d0, d0, d2
     fcvtzu  w20, d0
-    cbz     w20, pf_fin
+    cbz     w20, pf_cero_dec
 
     // --- 6 digitos en el buffer, de atras hacia adelante ---
     adrp    x21, pf_buf
@@ -598,9 +607,228 @@ pf_imprime:
     adrp    x1, pf_buf
     add     x1, x1, :lo12:pf_buf
     bl      print_cstr
+    b       pf_fin
+
+pf_cero_dec:
+    adrp    x1, pf_punto
+    add     x1, x1, :lo12:pf_punto
+    bl      print_cstr
+    adrp    x1, pf_cero
+    add     x1, x1, :lo12:pf_cero
+    bl      print_cstr
 
 pf_fin:
     ldp     x21, x22, [sp], #16
     ldp     x19, x20, [sp], #16
     ldp     x29, x30, [sp], #16
+    ret
+.data
+arr_ab:     .asciz "["
+arr_ce:     .asciz "]"
+arr_coma:   .asciz ", "
+arr_com:    .asciz "\""
+arr_true:   .asciz "true"
+arr_false:  .asciz "false"
+
+.bss
+.align 3
+arr_ch:     .skip 8
+
+.text
+
+// ---------------------------------------------------------------------------
+//  print_arreglo(x1 = puntero, w2 = codigo del tipo de elemento)
+//    0 = i32   1 = String   2 = bool   3 = char   4 = f64
+//  Imprime  [10, 20, 30]   o   ["a", "b"]
+// ---------------------------------------------------------------------------
+print_arreglo:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    stp     x19, x20, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+    stp     x23, x24, [sp, #-16]!
+
+    mov     x19, x1
+    mov     w20, w2
+    ldr     x21, [x1, #-8]
+    mov     x22, #0
+
+    adrp    x1, arr_ab
+    add     x1, x1, :lo12:arr_ab
+    bl      print_cstr
+
+pa_loop:
+    cmp     x22, x21
+    b.hs    pa_fin
+    cbz     x22, pa_sin_coma
+    adrp    x1, arr_coma
+    add     x1, x1, :lo12:arr_coma
+    bl      print_cstr
+pa_sin_coma:
+    ldr     x0, [x19, x22, lsl #3]
+    cmp     w20, #1
+    b.eq    pa_cadena
+    cmp     w20, #2
+    b.eq    pa_bool
+    cmp     w20, #3
+    b.eq    pa_char
+    cmp     w20, #4
+    b.eq    pa_f64
+    bl      print_num
+    b       pa_sigue
+
+pa_cadena:
+    mov     x23, x0
+    adrp    x1, arr_com
+    add     x1, x1, :lo12:arr_com
+    bl      print_cstr
+    mov     x1, x23
+    bl      print_cstr
+    adrp    x1, arr_com
+    add     x1, x1, :lo12:arr_com
+    bl      print_cstr
+    b       pa_sigue
+
+pa_bool:
+    cbz     w0, pa_bool_falso
+    adrp    x1, arr_true
+    add     x1, x1, :lo12:arr_true
+    b       pa_bool_imp
+pa_bool_falso:
+    adrp    x1, arr_false
+    add     x1, x1, :lo12:arr_false
+pa_bool_imp:
+    bl      print_cstr
+    b       pa_sigue
+
+pa_char:
+    adrp    x23, arr_ch
+    add     x23, x23, :lo12:arr_ch
+    strb    w0, [x23]
+    strb    wzr, [x23, #1]
+    mov     x1, x23
+    bl      print_cstr
+    b       pa_sigue
+
+pa_f64:
+    fmov    d0, x0
+    bl      print_f64
+
+pa_sigue:
+    add     x22, x22, #1
+    b       pa_loop
+
+pa_fin:
+    adrp    x1, arr_ce
+    add     x1, x1, :lo12:arr_ce
+    bl      print_cstr
+
+    ldp     x23, x24, [sp], #16
+    ldp     x21, x22, [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    ret
+.text
+
+// ---------------------------------------------------------------------------
+//  str_concat(x1 = primera, x2 = segunda) -> x0 = cadena nueva
+// ---------------------------------------------------------------------------
+str_concat:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    stp     x19, x20, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+
+    mov     x19, x1
+    mov     x20, x2
+
+    mov     x1, x19
+    bl      strlen
+    mov     x21, x2
+    mov     x1, x20
+    bl      strlen
+    mov     x22, x2
+
+    add     x0, x21, x22
+    add     x0, x0, #1
+    bl      alloc
+
+    mov     x9, x0
+    mov     x10, x19
+sc_a:
+    ldrb    w11, [x10], #1
+    cbz     w11, sc_b_ini
+    strb    w11, [x9], #1
+    b       sc_a
+sc_b_ini:
+    mov     x10, x20
+sc_b:
+    ldrb    w11, [x10], #1
+    strb    w11, [x9], #1
+    cbnz    w11, sc_b
+
+    ldp     x21, x22, [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    ret
+
+// ---------------------------------------------------------------------------
+//  str_repeat(x1 = cadena, w2 = veces) -> x0 = cadena nueva
+// ---------------------------------------------------------------------------
+str_repeat:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    stp     x19, x20, [sp, #-16]!
+    stp     x21, x22, [sp, #-16]!
+
+    mov     x19, x1
+    mov     w20, w2
+    cmp     w20, #0
+    b.gt    sr_ok
+    mov     w20, #0
+sr_ok:
+    mov     x1, x19
+    bl      strlen
+    mov     x21, x2
+
+    mul     x0, x21, x20
+    add     x0, x0, #1
+    bl      alloc
+
+    mov     x9, x0
+    mov     x22, #0
+sr_loop:
+    cmp     x22, x20
+    b.hs    sr_fin
+    mov     x10, x19
+sr_copia:
+    ldrb    w11, [x10], #1
+    cbz     w11, sr_sig
+    strb    w11, [x9], #1
+    b       sr_copia
+sr_sig:
+    add     x22, x22, #1
+    b       sr_loop
+sr_fin:
+    strb    wzr, [x9]
+
+    ldp     x21, x22, [sp], #16
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    ret
+
+// ---------------------------------------------------------------------------
+//  str_equals(x1 = a, x2 = b) -> w0 = 1 si son iguales
+// ---------------------------------------------------------------------------
+str_equals:
+se_loop:
+    ldrb    w3, [x1], #1
+    ldrb    w4, [x2], #1
+    cmp     w3, w4
+    b.ne    se_no
+    cbnz    w3, se_loop
+    mov     w0, #1
+    ret
+se_no:
+    mov     w0, #0
     ret
